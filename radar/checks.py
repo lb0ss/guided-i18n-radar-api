@@ -104,11 +104,9 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
     sent = []
     if reported or moved or failed:  # quiet days stay quiet: the digest is still saved
         subject = f"Radar: {len(reported)} new comment{'s' * (len(reported) != 1)}" + (", stats changed" if moved else "")
-        for fn in (notify.email, notify.push):
-            try:
-                sent.append(fn(s, subject, text))
-            except Exception as e:  # noqa: BLE001
-                sent.append(f"{fn.__name__} failed: {e}")
+        first = min(reported, key=lambda c: c.created_at) if reported else None
+        sent = notify.send(s, subject, text, short_digest(reported, changes, failed),
+                           url=first.url if first else None, url_title="Open the comment" if first else None)
 
     with session() as db:
         r = db.get(Run, run.id)
@@ -118,6 +116,28 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
         db.commit()
     return {"run": run.id, "new_comments": len(reported), "baseline": len(new) if first_check else 0,
             "failed": [f.name for f in failed], "digest": str(path), "notified": sent, "text": text}
+
+
+LABEL = {"openvsx": "Open VSX", "marketplace": "Marketplace", "github": "GitHub", "devto": "dev.to"}
+
+
+def short_digest(new: list[FoundComment], changes: dict, failed: list[Step]) -> str:
+    """The phone version: who commented, what moved, what broke. Pushover reads a little HTML."""
+    from html import escape
+
+    lines = []
+    for c in sorted(new, key=lambda c: c.created_at)[:3]:
+        body = " ".join(c.body.split())
+        lines.append(f"<b>{escape(c.author)}</b> on {escape(c.post_title[:40])}: {escape(body[:110])}{'…' if len(body) > 110 else ''}")
+    if len(new) > 3:
+        lines.append(f"…and {len(new) - 3} more in Radar")
+    moved = [f"{LABEL.get(src, src)} {m.replace('_', ' ')} {v:g} ({'+' if v > old else ''}{v - old:g})"
+             for (src, m), (old, v) in changes.items() if old is not None and old != v]
+    if moved:
+        lines.append("Stats: " + ", ".join(moved))
+    if failed:
+        lines.append(f"{len(failed)} problem{'s' * (len(failed) != 1)}: " + ", ".join(f.name for f in failed))
+    return "\n".join(lines) or "Nothing new."
 
 
 def digest(stats: dict, changes: dict, new: list[FoundComment], baseline: list[FoundComment], failed: list[Step]) -> str:

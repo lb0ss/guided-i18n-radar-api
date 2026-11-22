@@ -8,6 +8,7 @@
   uv run radar draft comment ID          draft a reply to a comment on your post
   uv run radar draft paste --channel reddit-reply [--post ID] < thread.txt
   uv run radar show DRAFT_ID
+  uv run radar test-push                 send a test notification to Pushover
 """
 
 import argparse
@@ -58,6 +59,7 @@ def main() -> None:
     dp.add_argument("--channel")
     dp.add_argument("--post", type=int, help="your post this replies under (see `radar posts`)")
     dp.add_argument("--yes", action="store_true", help="skip the cost confirmation")
+    sub.add_parser("test-push", help="send a test notification to Pushover")
     sp = sub.add_parser("show")
     sp.add_argument("id", type=int)
     a = ap.parse_args()
@@ -113,6 +115,12 @@ def main() -> None:
                 return
             job = asyncio.run(start(**args, confirm=True))
         _show(job)
+    elif a.cmd == "test-push":
+        from .config import settings
+        from .notify import push
+
+        print(push(settings(), "Radar test", "If you can read this, Radar's digests will reach your phone.",
+                   url="https://github.com/lb0ss/guided-i18n-radar-api", url_title="Radar on GitHub"))
     elif a.cmd == "show":
         with session() as db:
             job = db.get(DraftJob, a.id)

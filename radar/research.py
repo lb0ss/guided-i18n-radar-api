@@ -250,11 +250,9 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
     n_reply = sum(o.state == "new" for o in kept)
     if n_reply or failed:  # intel alone waits for the next digest you open
         subject = f"Radar research: {n_reply} thread{'s' * (n_reply != 1)} worth a reply"
-        for fn in (notify.email, notify.push):
-            try:
-                sent.append(fn(s, subject, text))
-            except Exception as e:  # noqa: BLE001
-                sent.append(f"{fn.__name__} failed: {e}")
+        replies = sorted((o for o in kept if o.state == "new"), key=lambda o: -o.relevance)
+        sent = notify.send(s, subject, text, short_digest(replies, failed),
+                           url=replies[0].url if replies else None, url_title="Open the top thread" if replies else None)
     return {"run": run.id, "queries": len(queries), "found": len(found), "scored": len(scored),
             "replies": sum(o.state == "new" for o in kept), "intel": sum(o.state == "intel" for o in kept),
             "cost": round(cost, 4), "failed": [f.name for f in failed], "digest": str(path), "notified": sent, "text": text}
@@ -262,6 +260,19 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
 
 async def _fail(msg: str):
     raise RuntimeError(msg)
+
+
+def short_digest(replies: list[Opportunity], failed: list[Step]) -> str:
+    from html import escape
+
+    lines = [f"• {escape(o.title[:90])} <i>({o.source})</i>" for o in replies[:3]]
+    if len(replies) > 3:
+        lines.append(f"…and {len(replies) - 3} more")
+    if replies:
+        lines.append("Draft replies in Radar on your Mac.")
+    if failed:
+        lines.append(f"{len(failed)} problem{'s' * (len(failed) != 1)} in the run")
+    return "\n".join(lines) or "Nothing new."
 
 
 def digest(kept: list[Opportunity], n_queries: int, n_found: int, n_fresh: int, n_scored: int, cost: float, failed: list[Step]) -> str:

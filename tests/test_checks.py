@@ -64,3 +64,23 @@ def test_first_comment_after_a_first_check_with_none_is_reported(s, web):
     run(s, web)  # first check: nothing to record
     web.devto_comments = [devto_comment("b1", "newcomer", "First!")]
     assert run(s, web)["new_comments"] == 1
+
+
+def test_pushover_gets_a_short_phone_digest(s, web, monkeypatch):
+    from dataclasses import replace
+
+    from radar import notify
+
+    sent = []
+    monkeypatch.setattr(notify.httpx, "post", lambda url, timeout, data: sent.append(data) or type("R", (), {"raise_for_status": lambda self: None})())
+    s2 = replace(s, pushover_token="tok", pushover_user="usr")
+    asyncio.run(run_checks(s2, web.client()))
+    web.downloads = 870
+    web.devto_comments = [devto_comment("z1", "reader", "Does it handle <b>plurals</b> in Polish?")]
+    r = asyncio.run(run_checks(s2, web.client()))
+    assert "pushed" in r["notified"]
+    msg = sent[-1]
+    assert msg["title"] == "Radar: 1 new comment, stats changed" and msg["html"] == 1
+    assert "<b>reader</b> on Wrapping strings in t(): Does it handle plurals in Polish?" in msg["message"]
+    assert "Open VSX downloads 870 (+13)" in msg["message"] and "|" not in msg["message"]  # no Markdown table
+    assert msg["url"] == "https://dev.to/reader/comment/z1" and len(msg["message"]) <= 1024
