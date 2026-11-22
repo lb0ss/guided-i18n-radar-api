@@ -187,6 +187,13 @@ async def create_draft(req: DraftRequest) -> dict:
     return replies.summary(job)
 
 
+@app.get("/drafts")
+def list_drafts(limit: int = 30) -> list[dict]:
+    with session() as db:
+        jobs = db.exec(select(DraftJob).order_by(col(DraftJob.id).desc()).limit(limit)).all()
+    return [replies.summary(j) for j in jobs]
+
+
 @app.get("/drafts/{job_id}")
 def get_draft(job_id: int) -> dict:
     with session() as db:
