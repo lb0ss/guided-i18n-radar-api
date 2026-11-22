@@ -62,6 +62,27 @@ class Comment(SQLModel, table=True):
     state: str = Field(default="new", index=True)
 
 
+class Opportunity(SQLModel, table=True):
+    """A thread research found. Low scores are kept too, so they're never scored twice."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="run.id", index=True)
+    url: str = Field(unique=True)
+    source: str
+    title: str
+    excerpt: str = ""
+    created_at: datetime
+    replies: int = 0
+    query: str = ""
+    found_at: datetime = Field(default_factory=now)
+    relevance: int = 0  # 1-5 from the scorer
+    category: str = ""  # problem | competitor | request | mention | other
+    angle: str = ""  # how a reply could help
+    reason: str = ""
+    # new · low (below the brief's keep_relevance) · drafted · posted · skipped
+    state: str = Field(default="new", index=True)
+
+
 class Schedule(SQLModel, table=True):
     job: str = Field(primary_key=True)  # checks | research
     interval_hours: float

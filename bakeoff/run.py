@@ -18,7 +18,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import rules
-from .cases import SEEDED, TASKS, Seeded, Task
+from .cases import SEEDED, TASKS, Task
 from .llm import CLAUDE, OPENAI, PRICES, Draft, Result, Verdict, call, provider
 from .prompts import EVALUATOR_SYSTEM, WRITER_SYSTEM, facts, review_message, task_message
 

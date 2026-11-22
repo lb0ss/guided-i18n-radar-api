@@ -3,6 +3,7 @@ with known mistakes (to test whether each evaluator catches them)."""
 
 from dataclasses import dataclass, field
 
+
 @dataclass
 class Task:
     id: str
@@ -40,6 +41,6 @@ EXAMPLE_SEEDED = [
 ]
 
 try:  # the real cases, kept out of git (see cases_private.py)
-    from .cases_private import SEEDED, TASKS  # noqa: F401
+    from .cases_private import SEEDED, TASKS
 except ImportError:
     TASKS, SEEDED = EXAMPLE_TASKS, EXAMPLE_SEEDED

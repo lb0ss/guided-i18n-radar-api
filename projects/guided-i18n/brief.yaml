@@ -1,0 +1,30 @@
+# What research looks for. Edit freely; the planner reads it every run.
+product: >
+  guided-i18n, a free VS Code extension (also on Open VSX for Cursor and Windsurf users) that moves a
+  React app's hardcoded UI text into react-i18next with JSON language files and translates it with the
+  user's own AI key. Every string and key is shown in a checklist before anything changes; one Undo.
+  Limits: React + react-i18next + JSON only; not Vue, Angular or other i18n libraries.
+
+looking_for:
+  - people internationalizing an existing React app, or extracting hardcoded strings by hand
+  - react-i18next problems the extension solves (plurals, placeholders, Trans, keys, missing keys)
+  - frustration with AI agents or scripts doing i18n badly
+  - complaints about, or alternatives wanted to, i18n Ally, i18next-cli, i18next-parser, Babelize, Lingo.dev
+  - requests the roadmap should hear about: Vue, Next.js App Router, a CLI, other editors
+
+not_relevant:
+  - backend, mobile-native, game or document translation
+  - general translation-service marketing, job posts, release notes
+  - threads that already have an accepted answer, or are mostly a link to someone's own product
+
+freshness_days: 7          # only threads from this many days back; Radar also skips anything seen before
+
+# Free, exact queries run every time, no model involved
+always:
+  mentions: guided-i18n                        # anyone talking about the extension
+  competitor_repos: [lokalise/i18n-ally, i18next/i18next-cli, i18next/i18next-parser]   # their new issues
+
+limits:                     # caps code enforces on the planner
+  queries_per_source: {github: 4, devto: 3, stackoverflow: 2, hackernews: 2}
+  results_per_query: 15
+  keep_relevance: 4         # 1-5; lower scores are recorded (so they're not scored again) but not shown

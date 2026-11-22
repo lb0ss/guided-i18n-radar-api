@@ -14,7 +14,7 @@ def test_due_after_the_interval_and_on_first_run():
 
 
 def test_jobs_that_arent_built_never_run():
-    assert not scheduler.is_due(Schedule(job="research", interval_hours=72, enabled=True))
+    assert not scheduler.is_due(Schedule(job="drafting", interval_hours=72, enabled=True))
 
 
 def test_schedule_api(s, monkeypatch):
@@ -26,7 +26,7 @@ def test_schedule_api(s, monkeypatch):
     with TestClient(app) as c:
         jobs = {j["job"]: j for j in c.get("/schedule").json()}
         assert jobs["checks"]["interval_hours"] == 24 and jobs["checks"]["enabled"]
-        assert jobs["research"]["interval_hours"] == 72 and not jobs["research"]["built"]
+        assert jobs["research"]["interval_hours"] == 72
         assert c.put("/schedule/checks", json={"interval_hours": 12}).json()["interval_hours"] == 12
-        assert c.put("/schedule/research", json={"enabled": True}).status_code == 409
+        assert c.put("/schedule/nope", json={"enabled": True}).status_code == 404
         assert c.put("/schedule/checks", json={"interval_hours": 0.1}).status_code == 422

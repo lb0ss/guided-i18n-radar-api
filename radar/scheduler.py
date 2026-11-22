@@ -9,11 +9,12 @@ from sqlmodel import select
 
 from .checks import run_checks
 from .db import Schedule, now, session
+from .research import run_research
 
 log = logging.getLogger("radar.scheduler")
 TICK_SECONDS = 300
-DEFAULTS = {"checks": (24.0, True), "research": (72.0, False)}
-JOBS = {"checks": run_checks}  # research arrives in build phase 3
+DEFAULTS = {"checks": (24.0, True), "research": (72.0, True)}
+JOBS = {"checks": run_checks, "research": run_research}
 _locks: dict[str, asyncio.Lock] = {}
 
 

@@ -24,6 +24,12 @@ class FakeWeb:
         self.downloads = 857
         self.devto_comments = []
         self.github_comments = []
+        self.search_issues = {}  # query substring -> list of issues
+        self.queries = []
+
+    def _issue(self, n, title, body="", repo="someone/app"):
+        return {"html_url": f"https://github.com/{repo}/issues/{n}", "title": title, "body": body,
+                "created_at": "2026-11-21T09:00:00Z", "comments": 1}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         u = str(request.url)
@@ -32,6 +38,19 @@ class FakeWeb:
         if "marketplace.visualstudio.com" in u:
             stats = [{"statisticName": "install", "value": 1.0}, {"statisticName": "downloadCount", "value": 148.0}]
             return httpx.Response(200, json={"results": [{"extensions": [{"statistics": stats}]}]})
+        if u.startswith("https://api.github.com/search/issues"):
+            q = request.url.params["q"]
+            self.queries.append(("github", q))
+            return httpx.Response(200, json={"items": [i for k, items in self.search_issues.items() if k in q for i in items]})
+        if "api.stackexchange.com" in u:
+            self.queries.append(("stackoverflow", request.url.params["tagged"]))
+            return httpx.Response(200, json={"items": []})
+        if "hn.algolia.com" in u:
+            self.queries.append(("hackernews", request.url.params["query"]))
+            return httpx.Response(200, json={"hits": []})
+        if "dev.to/api/articles" in u and "tag" in request.url.params:
+            self.queries.append(("devto", request.url.params["tag"]))
+            return httpx.Response(200, json=[])
         if u.startswith("https://api.github.com/repos/lb0ss/guided-i18n/issues/comments"):
             return httpx.Response(200, json=self.github_comments)
         if u.startswith("https://api.github.com/repos/lb0ss/guided-i18n/issues"):
