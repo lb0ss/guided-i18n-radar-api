@@ -78,11 +78,20 @@ def runs(limit: int = 20) -> list[dict]:
 
 
 @app.get("/stats")
-def stats() -> dict:
+def stats(points: int = 30) -> dict:
+    """Latest value of every metric, the change since the check before, and its recent history for a trend line."""
     with session() as db:
-        last = db.exec(select(Stat.run_id).order_by(col(Stat.run_id).desc())).first()
-        rows = db.exec(select(Stat).where(Stat.run_id == last)).all() if last else []
-    return {"run": last, "stats": [{"source": r.source, "metric": r.metric, "value": r.value, "at": r.at} for r in rows]}
+        rows = db.exec(select(Stat).order_by(col(Stat.run_id))).all()
+    series: dict[tuple[str, str], list[Stat]] = {}
+    for r in rows:
+        series.setdefault((r.source, r.metric), []).append(r)
+    out = []
+    for (source, metric), vals in series.items():
+        last, prev = vals[-1], (vals[-2] if len(vals) > 1 else None)
+        out.append({"source": source, "metric": metric, "value": last.value, "at": last.at,
+                    "change": None if prev is None else last.value - prev.value,
+                    "history": [{"at": v.at, "value": v.value} for v in vals[-points:]]})
+    return {"stats": out}
 
 
 @app.get("/comments")
@@ -114,6 +123,47 @@ def opportunities(state: str = "new") -> list[dict]:
     with session() as db:
         rows = db.exec(select(Opportunity).where(Opportunity.state == state).order_by(col(Opportunity.relevance).desc())).all()
         return [o.model_dump() for o in rows]
+
+
+@app.post("/opportunities/{opp_id}/skip")
+def skip_opportunity(opp_id: int) -> dict:
+    with session() as db:
+        o = db.get(Opportunity, opp_id)
+        if o is None:
+            raise HTTPException(404, "no such opportunity")
+        o.state = "skipped"
+        db.add(o)
+        db.commit()
+        return o.model_dump()
+
+
+def _brief_path():
+    from .config import ROOT, settings
+
+    return ROOT / "projects" / settings().project / "brief.yaml"
+
+
+@app.get("/brief")
+def get_brief() -> dict:
+    return {"text": _brief_path().read_text()}
+
+
+class BriefText(BaseModel):
+    text: str
+
+
+@app.put("/brief")
+def put_brief(body: BriefText) -> dict:
+    import yaml
+
+    try:
+        data = yaml.safe_load(body.text)
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"not valid YAML: {e}") from e
+    if not isinstance(data, dict) or not data.get("product") or not data.get("looking_for"):
+        raise HTTPException(400, "the brief needs at least product and looking_for")
+    _brief_path().write_text(body.text)
+    return {"text": body.text}
 
 
 class DraftRequest(BaseModel):
@@ -157,3 +207,20 @@ def posted(job_id: int, body: Posted) -> dict:
         return replies.summary(replies.mark_posted(job_id, body.url, body.text))
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+
+
+# The built web app (guided-i18n-radar-web), served from here so one service is enough. API routes above win.
+def _mount_web() -> None:
+    import os
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    from .config import ROOT
+
+    dist = Path(os.environ.get("RADAR_WEB_DIST", ROOT.parent / "guided-i18n-radar-web" / "dist")).expanduser()
+    if (dist / "index.html").exists():
+        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+
+
+_mount_web()

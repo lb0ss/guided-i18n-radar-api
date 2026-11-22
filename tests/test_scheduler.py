@@ -30,3 +30,25 @@ def test_schedule_api(s, monkeypatch):
         assert c.put("/schedule/checks", json={"interval_hours": 12}).json()["interval_hours"] == 12
         assert c.put("/schedule/nope", json={"enabled": True}).status_code == 404
         assert c.put("/schedule/checks", json={"interval_hours": 0.1}).status_code == 422
+
+
+def test_brief_and_stats_routes(s, monkeypatch, tmp_path):
+    monkeypatch.setattr(scheduler, "is_due", lambda *a, **k: False)
+    from radar import api
+    from radar.db import Run, Stat, session
+
+    brief = tmp_path / "brief.yaml"
+    brief.write_text("product: x\nlooking_for: [y]\n")
+    monkeypatch.setattr(api, "_brief_path", lambda: brief)
+    with session() as db:
+        for run, v in ((1, 850), (2, 857)):
+            db.add(Run(id=run, job="checks"))
+            db.add(Stat(run_id=run, source="openvsx", metric="downloads", value=v))
+        db.commit()
+    with TestClient(api.app) as c:
+        st = c.get("/stats").json()["stats"][0]
+        assert (st["value"], st["change"], len(st["history"])) == (857, 7, 2)
+        assert c.get("/brief").json()["text"].startswith("product")
+        assert c.put("/brief", json={"text": "product: [unclosed"}).status_code == 400
+        assert c.put("/brief", json={"text": "looking_for: [a]"}).status_code == 400
+        assert c.put("/brief", json={"text": "product: z\nlooking_for: [a]\n"}).status_code == 200
