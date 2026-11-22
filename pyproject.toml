@@ -1,0 +1,38 @@
+[project]
+name = "guided-i18n-radar-api"
+version = "0.1.0"
+description = "guided-i18n Radar: stats, comments on your posts, research and checked reply drafts for a solo developer's marketing"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=2.12.0",
+    "fastapi>=0.165.0",
+    "httpx>=0.28.1",
+    "openai>=3.57.0",
+    "pydantic>=2.14.4",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.4",
+    "sqlmodel>=0.0.50",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.6",
+]
+
+[project.scripts]
+radar = "radar.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["radar"]
+
+[tool.ruff]
+line-length = 130
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

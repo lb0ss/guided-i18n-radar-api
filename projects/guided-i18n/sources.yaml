@@ -1,0 +1,13 @@
+# What Radar tracks for guided-i18n. Stats and comment-watching need no API keys.
+stats:
+  openvsx: BosiTerryLin/guided-i18n        # namespace/name on open-vsx.org
+  marketplace: BosiTerryLin.guided-i18n    # publisher.extension on the VS Code Marketplace
+  github: lb0ss/guided-i18n                # public repo: stars, open issues
+  devto: lb0ss                             # dev.to username: reactions, comments (views need DEV_API_KEY)
+
+watch:
+  github: lb0ss/guided-i18n                # new issues and issue comments
+  devto: lb0ss                             # comments on your dev.to articles
+  me:                                      # your own accounts: your own comments are never reported
+    github: lb0ss
+    devto: lb0ss

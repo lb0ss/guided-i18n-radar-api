@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.env
+bakeoff/out/
+
+data/
+bakeoff/cases_private.py
+.pytest_cache/
+.ruff_cache/

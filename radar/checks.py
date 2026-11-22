@@ -1,0 +1,142 @@
+"""The daily checks job, no LLM: stats from every source, new comments on your posts, one digest."""
+
+import asyncio
+import time
+from datetime import UTC
+
+import httpx
+from sqlmodel import col, select
+
+from . import notify
+from .config import Settings, settings
+from .db import Comment, MyPost, Run, Stat, Step, now, session
+from .sources import FoundComment, devto, github, marketplace, openvsx
+
+USER_AGENT = "guided-i18n-radar (personal stats)"
+
+
+async def _step(run_id: int, name: str, coro):
+    t = time.monotonic()
+    try:
+        result = await coro
+        status, detail = "ok", ""
+    except Exception as e:  # noqa: BLE001 - one failing source must not stop the others
+        result, status, detail = None, "failed", f"{type(e).__name__}: {e}"[:500]
+    with session() as db:
+        db.add(Step(run_id=run_id, name=name, status=status, seconds=round(time.monotonic() - t, 2), detail=detail))
+        db.commit()
+    return result
+
+
+def _latest(db, source: str, metric: str, before_run: int) -> float | None:
+    row = db.exec(select(Stat).where(Stat.source == source, Stat.metric == metric, Stat.run_id < before_run)
+                  .order_by(col(Stat.run_id).desc())).first()
+    return row.value if row else None
+
+
+async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None = None) -> dict:
+    s = s or settings()
+    src, watch = s.sources.get("stats", {}), s.sources.get("watch", {})
+    me = watch.get("me", {})
+    headers = {"User-Agent": USER_AGENT}
+    if s.github_token:
+        headers["Authorization"] = f"Bearer {s.github_token}"
+    own_client = client is None
+    client = client or httpx.AsyncClient(timeout=30, headers=headers, follow_redirects=True)
+
+    with session() as db:
+        run = Run(job="checks")
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        # The very first completed check only records what's already there.
+        first_check = db.exec(select(Run).where(Run.job == "checks", Run.id < run.id, col(Run.finished_at).is_not(None))).first() is None
+
+    try:
+        jobs = {}
+        if "openvsx" in src:
+            jobs["openvsx"] = openvsx.stats(client, src["openvsx"])
+        if "marketplace" in src:
+            jobs["marketplace"] = marketplace.stats(client, src["marketplace"])
+        if "github" in src:
+            jobs["github"] = github.stats(client, src["github"])
+        if "devto" in src:
+            jobs["devto"] = devto.stats(client, src["devto"], s.devto_api_key)
+        names = list(jobs)
+        results = await asyncio.gather(*(_step(run.id, f"stats:{n}", jobs[n]) for n in names))
+        stats = {n: r for n, r in zip(names, results) if r is not None}
+
+        watched: list[FoundComment] = []
+        if "github" in watch:
+            watched += await _step(run.id, "watch:github", github.comments(client, watch["github"], me.get("github"))) or []
+        if "devto" in watch:
+            got = await _step(run.id, "watch:devto", devto.posts_and_comments(client, watch["devto"], me.get("devto")))
+            if got:
+                posts, comments = got
+                watched += comments
+                with session() as db:
+                    known = set(db.exec(select(MyPost.url)).all())
+                    db.add_all(MyPost(platform=p.platform, url=p.url, title=p.title, posted_at=p.posted_at) for p in posts if p.url not in known)
+                    db.commit()
+    finally:
+        if own_client:
+            await client.aclose()
+
+    with session() as db:
+        for source, metrics in stats.items():
+            db.add_all(Stat(run_id=run.id, source=source, metric=m, value=float(v)) for m, v in metrics.items())
+        seen = set(db.exec(select(Comment.external_id)).all())
+        new = [c for c in watched if c.external_id not in seen]
+        for c in new:
+            db.add(Comment(platform=c.platform, external_id=c.external_id, post_url=c.post_url, url=c.url, author=c.author,
+                           body=c.body, created_at=c.created_at, state="baseline" if first_check else "new"))
+        db.commit()
+        changes = {
+            (source, m): (_latest(db, source, m, run.id), v) for source, metrics in stats.items() for m, v in metrics.items()
+        }
+        failed = db.exec(select(Step).where(Step.run_id == run.id, Step.status == "failed")).all()
+
+    reported = [] if first_check else new
+    text = digest(stats, changes, reported, new if first_check else [], failed)
+    when = now().astimezone().strftime("%Y-%m-%d-%H%M%S")
+    path = notify.save(s, when, text)
+    moved = any(old is not None and old != new_v for old, new_v in changes.values())
+    sent = []
+    if reported or moved or failed:  # quiet days stay quiet: the digest is still saved
+        subject = f"Radar: {len(reported)} new comment{'s' * (len(reported) != 1)}" + (", stats changed" if moved else "")
+        for fn in (notify.email, notify.push):
+            try:
+                sent.append(fn(s, subject, text))
+            except Exception as e:  # noqa: BLE001
+                sent.append(f"{fn.__name__} failed: {e}")
+
+    with session() as db:
+        r = db.get(Run, run.id)
+        r.finished_at = now()
+        r.status = "partial" if failed else "ok"
+        db.add(r)
+        db.commit()
+    return {"run": run.id, "new_comments": len(reported), "baseline": len(new) if first_check else 0,
+            "failed": [f.name for f in failed], "digest": str(path), "notified": sent, "text": text}
+
+
+def digest(stats: dict, changes: dict, new: list[FoundComment], baseline: list[FoundComment], failed: list[Step]) -> str:
+    lines = ["# Radar digest", ""]
+    if new:
+        lines += [f"## {len(new)} new comment{'s' * (len(new) != 1)} on your posts", ""]
+        for c in sorted(new, key=lambda c: c.created_at):
+            body = " ".join(c.body.split())
+            lines += [f"- **{c.author}** on {c.post_title} ({c.platform}, {c.created_at.astimezone(UTC):%b %d})",
+                      f"  {body[:280]}{'…' if len(body) > 280 else ''}", f"  {c.url}"]
+        lines += ["", "Open Radar to confirm a drafted reply for any of them.", ""]
+    elif baseline:
+        lines += [f"First check: {len(baseline)} existing comments recorded as already seen. From now on only new ones are reported.", ""]
+    else:
+        lines += ["No new comments on your posts.", ""]
+    lines += ["## Stats", "", "| Source | Metric | Now | Change |", "|---|---|---|---|"]
+    for (source, m), (old, v) in changes.items():
+        delta = "" if old is None else (f"+{v - old:g}" if v > old else (f"{v - old:g}" if v < old else "–"))
+        lines.append(f"| {source} | {m} | {v:g} | {delta} |")
+    if failed:
+        lines += ["", "## Problems", ""] + [f"- {f.name}: {f.detail}" for f in failed]
+    return "\n".join(lines) + "\n"
