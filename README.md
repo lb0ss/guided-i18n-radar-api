@@ -46,6 +46,9 @@ scripts/launch-agent.sh status
 scripts/launch-agent.sh uninstall
 ```
 
+After pulling or editing either repo, `scripts/update.sh` installs what changed, rebuilds the UI and
+restarts the service.
+
 The API listens on `http://127.0.0.1:8000` only. Jobs run while the Mac is awake; a job missed
 while it was asleep runs once when it wakes.
 
