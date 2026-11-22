@@ -32,6 +32,7 @@ install)
 </plist>
 PLIST
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  i=0; while launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
   launchctl bootstrap "gui/$(id -u)" "$PLIST"
   echo "installed: Radar starts at login (http://127.0.0.1:8000, log $LOG)" ;;
 uninstall)
