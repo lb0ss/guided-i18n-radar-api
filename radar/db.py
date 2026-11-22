@@ -83,6 +83,39 @@ class Opportunity(SQLModel, table=True):
     state: str = Field(default="new", index=True)
 
 
+class DraftJob(SQLModel, table=True):
+    """One Draft a Reply request: what it answers, and the outcome of the write-evaluate loop."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=now)
+    kind: str  # opportunity | comment | pasted
+    source_id: int | None = None  # Opportunity.id or Comment.id
+    post_id: int | None = None  # MyPost.id when replying under your own post
+    channel: str
+    thread: str  # JSON list, oldest first; the last entry is what the reply answers
+    status: str = "running"  # pass | skip | needs work | failed
+    final_draft_id: int | None = None
+    cost: float = 0.0
+    posted_url: str | None = None
+    posted_text: str | None = None  # what you actually posted, for calibrating the evaluator
+
+
+class Draft(SQLModel, table=True):
+    """One attempt: the writer's text, the rule checks and the evaluator's verdict."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="draftjob.id", index=True)
+    attempt: int
+    text: str
+    rule_failures: str = "[]"  # JSON list
+    rule_warnings: str = "[]"
+    verdict: str = ""  # pass | revise | skip | "" when rules failed first
+    scores: str = "{}"  # JSON
+    problems: str = "[]"  # JSON list of {criterion, quote, fix}
+    unsupported: str = "[]"
+    cost: float = 0.0
+
+
 class Schedule(SQLModel, table=True):
     job: str = Field(primary_key=True)  # checks | research
     interval_hours: float

@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlmodel import col, select
 
-from . import scheduler
-from .db import Comment, Run, Schedule, Stat, Step, session
+from . import replies, scheduler
+from .db import Comment, DraftJob, MyPost, Opportunity, Run, Schedule, Stat, Step, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -101,3 +101,59 @@ def dismiss(comment_id: int) -> dict:
         db.add(c)
         db.commit()
         return c.model_dump()
+
+
+@app.get("/posts")
+def posts() -> list[dict]:
+    with session() as db:
+        return [p.model_dump() for p in db.exec(select(MyPost).order_by(MyPost.id)).all()]
+
+
+@app.get("/opportunities")
+def opportunities(state: str = "new") -> list[dict]:
+    with session() as db:
+        rows = db.exec(select(Opportunity).where(Opportunity.state == state).order_by(col(Opportunity.relevance).desc())).all()
+        return [o.model_dump() for o in rows]
+
+
+class DraftRequest(BaseModel):
+    kind: str = Field(description="opportunity | comment | pasted")
+    id: int | None = None
+    text: str | None = None
+    channel: str | None = None
+    post_id: int | None = None
+    confirm: bool = False
+
+
+@app.post("/drafts")
+async def create_draft(req: DraftRequest) -> dict:
+    """Without confirm=true this only returns the estimate; nothing is drafted or spent."""
+    try:
+        job = await replies.start(req.kind, req.id, req.text, req.channel, req.post_id, confirm=req.confirm)
+    except replies.NeedsConfirmation as e:
+        return {"needs_confirmation": True, "estimate": round(e.per_attempt, 3), "worst_case": round(e.worst, 3)}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return replies.summary(job)
+
+
+@app.get("/drafts/{job_id}")
+def get_draft(job_id: int) -> dict:
+    with session() as db:
+        job = db.get(DraftJob, job_id)
+    if job is None:
+        raise HTTPException(404, "no such draft")
+    return replies.summary(job)
+
+
+class Posted(BaseModel):
+    url: str
+    text: str = Field(description="What you actually posted, after your edits")
+
+
+@app.post("/drafts/{job_id}/posted")
+def posted(job_id: int, body: Posted) -> dict:
+    try:
+        return replies.summary(replies.mark_posted(job_id, body.url, body.text))
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
