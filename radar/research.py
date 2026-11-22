@@ -25,6 +25,7 @@ MAX_TO_SCORE = 100
 
 Source = Literal["github", "devto", "stackoverflow", "hackernews"]
 Category = Literal["problem", "competitor", "request", "mention", "other"]
+Action = Literal["reply", "intel", "skip"]
 
 
 class Query(BaseModel):
@@ -41,7 +42,8 @@ class Score(BaseModel):
     id: str
     relevance: int = Field(ge=1, le=5)
     category: Category
-    angle: str = Field(description="One sentence: how a reply could genuinely help this person (answer first, tool second).")
+    action: Action = Field(description="reply: a reply is welcome here. intel: worth knowing, don't reply. skip: neither.")
+    angle: str = Field(description="For reply: how to help, answering first. For intel: what it tells the developer.")
     reason: str = Field(description="One short sentence: why this score.")
 
 
@@ -76,7 +78,15 @@ For every result, by id:
 - category: problem (someone stuck), competitor (about i18n Ally, i18next-cli, i18next-parser, Babelize,
   Lingo.dev…), request (wants Vue, Next.js App Router, a CLI, another editor…), mention (names guided-i18n),
   other
-- angle: how to help, answering their question first
+- action, separately from relevance: would a reply from an outsider be welcome?
+  reply: a person asks a question, is stuck, or explicitly invites suggestions or tools, and a
+         helpful answer fits the place
+  intel: worth knowing but not replying to: issues on a competitor's own tracker (never promote
+         another tool there), a maintainer's own to-do or feature issue in their repo that asks
+         nobody for help, roadmap signals, articles people published
+  skip: neither
+- angle: for reply, how to help, answering their question first (mention the product only if it
+  truly fits); for intel, what it tells the developer
 Return every id you were given, and only those."""
 
 
@@ -199,11 +209,13 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
             f = ids[i]
             is_mention = bool(mention) and mention in f"{f.title} {f.excerpt}".lower()
             rel = 5 if is_mention else sc.relevance
+            action = "intel" if f.query.startswith("repo:") and sc.action == "reply" else sc.action  # never promote on a competitor's tracker
+            state = "low" if rel < keep or action == "skip" else ("new" if action == "reply" or is_mention else "intel")
             o = Opportunity(run_id=run.id, url=f.url, source=f.source, title=f.title, excerpt=f.excerpt, created_at=f.created_at,
                             replies=f.replies, query=f.query, relevance=rel, category="mention" if is_mention else sc.category,
-                            angle=sc.angle, reason=sc.reason, state="new" if rel >= keep else "low")
+                            angle=sc.angle, reason=sc.reason, state=state)
             db.add(o)
-            if o.state == "new":
+            if state in ("new", "intel"):
                 kept.append(o)
         db.commit()
         failed = db.exec(select(Step).where(Step.run_id == run.id, Step.status == "failed")).all()
@@ -216,14 +228,16 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
     text = digest(kept, len(queries), len(found), len(fresh), len(scored), cost, failed)
     path = notify.save(s, f"{now().astimezone():%Y-%m-%d-%H%M%S}-research", text)
     sent = []
-    if kept or failed:
-        subject = f"Radar research: {len(kept)} new opportunit{'y' if len(kept) == 1 else 'ies'}"
+    n_reply = sum(o.state == "new" for o in kept)
+    if n_reply or failed:  # intel alone waits for the next digest you open
+        subject = f"Radar research: {n_reply} thread{'s' * (n_reply != 1)} worth a reply"
         for fn in (notify.email, notify.push):
             try:
                 sent.append(fn(s, subject, text))
             except Exception as e:  # noqa: BLE001
                 sent.append(f"{fn.__name__} failed: {e}")
-    return {"run": run.id, "queries": len(queries), "found": len(found), "scored": len(scored), "kept": len(kept),
+    return {"run": run.id, "queries": len(queries), "found": len(found), "scored": len(scored),
+            "replies": sum(o.state == "new" for o in kept), "intel": sum(o.state == "intel" for o in kept),
             "cost": round(cost, 4), "failed": [f.name for f in failed], "digest": str(path), "notified": sent, "text": text}
 
 
@@ -232,17 +246,18 @@ async def _fail(msg: str):
 
 
 def digest(kept: list[Opportunity], n_queries: int, n_found: int, n_fresh: int, n_scored: int, cost: float, failed: list[Step]) -> str:
-    summary = (f"{n_queries} searches, {n_found} results, {n_fresh} not seen before, "
-               f"{n_scored} scored, **{len(kept)} worth a look**. Cost ${cost:.3f}.")
+    replies = [o for o in kept if o.state == "new"]
+    intel = [o for o in kept if o.state == "intel"]
+    summary = (f"{n_queries} searches, {n_found} results, {n_fresh} not seen before, {n_scored} scored: "
+               f"**{len(replies)} worth a reply**, {len(intel)} intel. Cost ${cost:.3f}.")
     lines = ["# Radar research", "", summary, ""]
-    for cat in ("mention", "problem", "competitor", "request", "other"):
-        group = sorted((o for o in kept if o.category == cat), key=lambda o: -o.relevance)
+    for title, group in ((f"Worth a reply ({len(replies)})", replies), (f"Intel only, don't reply ({len(intel)})", intel)):
         if not group:
             continue
-        lines += [f"## {cat.capitalize()} ({len(group)})", ""]
-        for o in group:
-            lines += [f"- **{o.title}** ({o.source}, {o.created_at:%b %d}, {o.replies} replies, relevance {o.relevance})",
-                      f"  Angle: {o.angle}", f"  {o.url}"]
+        lines += [f"## {title}", ""]
+        for o in sorted(group, key=lambda o: (o.category, -o.relevance)):
+            lines += [f"- **{o.title}** ({o.category}, {o.source}, {o.created_at:%b %d}, {o.replies} replies, relevance {o.relevance})",
+                      f"  {'Angle' if o.state == 'new' else 'Why it matters'}: {o.angle}", f"  {o.url}"]
         lines.append("")
     if failed:
         lines += ["## Problems", ""] + [f"- {f.name}: {f.detail}" for f in failed]

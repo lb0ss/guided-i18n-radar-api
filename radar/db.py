@@ -79,7 +79,7 @@ class Opportunity(SQLModel, table=True):
     category: str = ""  # problem | competitor | request | mention | other
     angle: str = ""  # how a reply could help
     reason: str = ""
-    # new · low (below the brief's keep_relevance) · drafted · posted · skipped
+    # new · intel (read, don't reply) · low (below keep_relevance, or skip) · drafted · posted · skipped
     state: str = Field(default="new", index=True)
 
 
