@@ -4,15 +4,15 @@ A small marketing assistant for a solo developer, built for
 [guided-i18n](https://github.com/lb0ss/guided-i18n), a VS Code extension for React i18n.
 Plain code runs every step; AI models only do the language work; a person posts everything.
 
-**Status: phase 1 of 5.**
+**Status: all 5 phases built.** Open **http://127.0.0.1:8000** for the review UI.
 
 | Phase | What | State |
 |---|---|---|
-| 1 | Daily stats, new comments on your posts, digest, schedule API, start at login | ✅ built |
+| 1 | Daily stats, new comments on your posts, digest, schedule API, start at login | ✅ |
 | 2 | Model bake-off: which models write and which evaluate (`bakeoff/`) | ✅ done: Claude Haiku 5.5 writes, GPT-5.4 evaluates |
-| 3 | Research: find threads where the extension helps (every 3 days) | planned |
-| 4 | Write ⇄ evaluate loop, Draft a Reply | planned |
-| 5 | Review UI (`guided-i18n-radar-web`, React) | planned |
+| 3 | Research every 3 days: threads worth a reply, and intel (read, don't reply) | ✅ |
+| 4 | Write ⇄ evaluate loop, Draft a Reply (`uv run radar draft …`, `POST /drafts`) | ✅ |
+| 5 | Review UI: [guided-i18n-radar-web](https://github.com/lb0ss/guided-i18n-radar-web), served by this API at `/` | ✅ |
 
 ## What the daily check does (no AI, no cost)
 
