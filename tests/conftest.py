@@ -26,10 +26,11 @@ class FakeWeb:
         self.github_comments = []
         self.search_issues = {}  # query substring -> list of issues
         self.queries = []
+        self.thread_replies = {}  # comments URL -> replies
 
-    def _issue(self, n, title, body="", repo="someone/app"):
+    def _issue(self, n, title, body="", repo="someone/app", state="open"):
         return {"html_url": f"https://github.com/{repo}/issues/{n}", "title": title, "body": body,
-                "created_at": "2026-11-21T09:00:00Z", "comments": 1}
+                "created_at": "2026-11-21T09:00:00Z", "comments": 1, "state": state}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         u = str(request.url)
@@ -38,6 +39,9 @@ class FakeWeb:
         if "marketplace.visualstudio.com" in u:
             stats = [{"statisticName": "install", "value": 1.0}, {"statisticName": "downloadCount", "value": 148.0}]
             return httpx.Response(200, json={"results": [{"extensions": [{"statistics": stats}]}]})
+        path = request.url.path
+        if "/issues/" in path and path.endswith("/comments") and "lb0ss/guided-i18n" not in path:
+            return httpx.Response(200, json=self.thread_replies.get(f"https://api.github.com{path}", []))
         if u.startswith("https://api.github.com/search/issues"):
             q = request.url.params["q"]
             self.queries.append(("github", q))

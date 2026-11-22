@@ -69,3 +69,17 @@ def test_never_suggests_replying_on_a_competitors_tracker(s, web):
     r = asyncio.run(run_research(s, web.client(), llm=FakeModel([])))
     assert r["replies"] == 0 and r["intel"] == 1 and "Intel only, don't reply (1)" in r["text"]
     assert r["notified"] == []  # intel alone sends nothing
+
+
+def test_latest_replies_and_status_reach_the_scorer(s, web):
+    web.search_issues = {"translate react": [web._issue(1, "How to extract hardcoded strings?", state="closed")]}
+    web.thread_replies = {"https://api.github.com/repos/someone/app/issues/1/comments": [
+        {"user": {"login": "helper"}, "body": "PR opened: #103 moves every string to en.ts"}]}
+    model = FakeModel([Query(source="github", query="translate react", why="")])
+    seen = []
+    async def spy(model_name, system, user, schema):
+        if schema is Scores:
+            seen.append(user)
+        return await model(model_name, system, user, schema)
+    asyncio.run(run_research(s, web.client(), llm=spy))
+    assert "Latest replies: helper: PR opened: #103" in seen[0] and '"status": "closed"' in seen[0]

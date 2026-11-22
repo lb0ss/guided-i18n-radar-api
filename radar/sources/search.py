@@ -18,6 +18,7 @@ class Found:
     created_at: datetime
     replies: int
     query: str
+    status: str = ""  # e.g. "closed" for a GitHub issue
 
 
 def _clean(s: str, n: int = 600) -> str:
@@ -35,8 +36,19 @@ async def github(client: httpx.AsyncClient, query: str, since: datetime, n: int)
     q = f"{query} is:issue created:>{since:%Y-%m-%d}"
     r = await client.get("https://api.github.com/search/issues", params={"q": q, "per_page": n, "sort": "created"})
     r.raise_for_status()
-    return [Found("github", i["html_url"], i["title"], _clean(i.get("body") or ""), _ts(i["created_at"]), i["comments"], query)
+    return [Found("github", i["html_url"], i["title"], _clean(i.get("body") or ""), _ts(i["created_at"]), i["comments"], query,
+                  status=i.get("state", ""))
             for i in r.json().get("items", [])]
+
+
+async def github_latest_replies(client: httpx.AsyncClient, issue_url: str, n: int = 3) -> str:
+    """The last few replies on a GitHub issue, so the scorer can tell when it's already answered or solved."""
+    m = re.match(r"https://github\.com/([^/]+/[^/]+)/issues/(\d+)", issue_url)
+    if not m:
+        return ""
+    r = await client.get(f"https://api.github.com/repos/{m.group(1)}/issues/{m.group(2)}/comments", params={"per_page": 100})
+    r.raise_for_status()
+    return " | ".join(f"{c['user']['login']}: {_clean(c.get('body') or '', 300)}" for c in r.json()[-n:])
 
 
 async def devto(client: httpx.AsyncClient, tag: str, since: datetime, n: int) -> list[Found]:

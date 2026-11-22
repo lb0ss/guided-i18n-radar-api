@@ -17,11 +17,12 @@ from .checks import USER_AGENT
 from .config import ROOT, Settings, settings
 from .db import Opportunity, Run, Step, now, session
 from .llm import call
-from .sources.search import SEARCH, SYNTAX, Found, window
+from .sources.search import SEARCH, SYNTAX, Found, github_latest_replies, window
 
 MODEL = "claude-haiku-5-5"  # planner and scorer; cheap, and the bake-off showed Haiku is accurate
 SCORE_BATCH = 25
 MAX_TO_SCORE = 100
+MAX_THREAD_FETCHES = 20  # GitHub threads with replies, read before scoring (free, within the hourly API limit)
 
 Source = Literal["github", "devto", "stackoverflow", "hackernews"]
 Category = Literal["problem", "competitor", "request", "mention", "other"]
@@ -85,6 +86,8 @@ For every result, by id:
          another tool there), a maintainer's own to-do or feature issue in their repo that asks
          nobody for help, roadmap signals, articles people published
   skip: neither
+  A thread that is closed, already answered, or has a pull request or finished fix linked in its
+  latest replies is not "reply": use intel (if it still tells something) or skip.
 - angle: for reply, how to help, answering their question first (mention the product only if it
   truly fits); for intel, what it tells the developer
 Return every id you were given, and only those."""
@@ -182,6 +185,22 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
         seen = set(db.exec(select(Opportunity.url).where(col(Opportunity.url).in_(list(found)))).all())
     fresh = sorted((f for u, f in found.items() if u not in seen), key=lambda f: f.created_at, reverse=True)[:MAX_TO_SCORE]
 
+    # 3b. for GitHub threads that have replies, read the latest ones (code): a thread that's already
+    # answered, or has a pull request open for it, shouldn't come out as "worth a reply"
+    to_read = [f for f in fresh if f.source == "github" and f.replies > 0][:MAX_THREAD_FETCHES]
+    if to_read:
+        own = own_client  # the search client is closed by now when research made its own
+        c2 = httpx.AsyncClient(timeout=30, headers={"User-Agent": USER_AGENT} | (
+            {"Authorization": f"Bearer {s.github_token}"} if s.github_token else {})) if own else client
+        try:
+            latest = await asyncio.gather(*(github_latest_replies(c2, f.url) for f in to_read), return_exceptions=True)
+        finally:
+            if own:
+                await c2.aclose()
+        for f, text in zip(to_read, latest):
+            if isinstance(text, str) and text:
+                f.excerpt = f"{f.excerpt}\nLatest replies: {text}"
+
     # 4. score (model) in parallel batches; ids the scorer wasn't given are rejected
     ids = {f"r{i}": f for i, f in enumerate(fresh, 1)}
     batches = [list(ids.items())[i:i + SCORE_BATCH] for i in range(0, len(ids), SCORE_BATCH)]
@@ -189,7 +208,7 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
 
     async def score(batch):
         user = json.dumps([{"id": i, "source": f.source, "title": f.title, "excerpt": f.excerpt, "replies": f.replies,
-                            "date": f"{f.created_at:%Y-%m-%d}"} for i, f in batch], ensure_ascii=False)
+                            "status": f.status, "date": f"{f.created_at:%Y-%m-%d}"} for i, f in batch], ensure_ascii=False)
         return await _step(run.id, f"score:{batch[0][0]}-{batch[-1][0]}", llm(MODEL, scorer, user, Scores))
 
     scored: dict[str, Score] = {}
