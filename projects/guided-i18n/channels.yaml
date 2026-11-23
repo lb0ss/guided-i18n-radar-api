@@ -1,10 +1,13 @@
 # How a reply should look per place. Code checks format, length, links and hashtags; the evaluator
 # checks the rest. "own_post" channels are replies under your own post (no need to say you built it).
 reddit-reply:
-  format: plain          # Reddit comment replies: plain text, no Markdown
+  format: markdown       # pasted into Reddit's Markdown editor
   max_chars: 500
   max_links: 1
-  guide: "A Reddit comment reply. Plain text, 2 to 4 sentences. Answer the person's point or question first."
+  guide: >-
+    A Reddit comment reply, pasted into Reddit's Markdown editor. 2 to 4 sentences; answer the person's
+    point or question first. Separate paragraphs with a blank line (a single line break is lost);
+    write a link as [text](url) and code as `code`. No headings, no bold, no list unless it really helps.
 reddit-post:
   format: markdown
   max_chars: 6000

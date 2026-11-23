@@ -53,7 +53,7 @@ async def github(client: httpx.AsyncClient, query: str, since: datetime, n: int)
 
 async def github_latest_replies(client: httpx.AsyncClient, issue_url: str, n: int = 3) -> str:
     """The last few replies on a GitHub issue, so the scorer can tell when it's already answered or solved.
-    The repo's own people are labeled, e.g. "truelockmc (owner): already working on this"."""
+    The repo's own people are labeled, e.g. "maint (owner): already working on this"."""
     m = re.match(r"https://github\.com/([^/]+/[^/]+)/issues/(\d+)", issue_url)
     if not m:
         return ""

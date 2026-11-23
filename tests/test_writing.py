@@ -85,11 +85,11 @@ def test_rule_failures_go_back_to_the_writer_without_the_evaluator(s, core):
         db.add(Comment(platform="reddit", external_id="r:1", post_url="https://reddit.com/r/x/1", url="u", author="q",
                        body="Polish plurals?", created_at=now()))
         db.commit()
-    model = Script(["**Yes**, Polish gets four forms.", "Yes, Polish gets four forms from Intl.PluralRules."], ["pass"])
+    model = Script(["Yes, Polish gets four forms. " * 30, "Yes, Polish gets four forms from Intl.PluralRules."], ["pass"])
     job = asyncio.run(replies.start("comment", 1, confirm=True, llm=model))
     assert job.status == "pass" and job.channel == "reddit-reply"
     assert [c[1] for c in model.calls] == ["DraftText", "DraftText", "Verdict"]
-    assert any("Markdown" in f for f in model.calls[1][2]["fix_these_problems_from_the_last_attempt"])
+    assert any("too long" in f for f in model.calls[1][2]["fix_these_problems_from_the_last_attempt"])
     assert model.calls[0][2]["thread"][0].startswith("Your post (reddit): My post")  # your post's text is attached
 
 
