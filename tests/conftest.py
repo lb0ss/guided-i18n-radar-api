@@ -28,9 +28,9 @@ class FakeWeb:
         self.queries = []
         self.thread_replies = {}  # comments URL -> replies
 
-    def _issue(self, n, title, body="", repo="someone/app", state="open"):
+    def _issue(self, n, title, body="", repo="someone/app", state="open", by="NONE"):
         return {"html_url": f"https://github.com/{repo}/issues/{n}", "title": title, "body": body,
-                "created_at": "2026-11-21T09:00:00Z", "comments": 1, "state": state}
+                "created_at": "2026-11-21T09:00:00Z", "comments": 1, "state": state, "author_association": by}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         u = str(request.url)

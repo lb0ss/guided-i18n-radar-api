@@ -83,3 +83,29 @@ def test_latest_replies_and_status_reach_the_scorer(s, web):
         return await model(model_name, system, user, schema)
     asyncio.run(run_research(s, web.client(), llm=spy))
     assert "Latest replies: helper: PR opened: #103" in seen[0] and '"status": "closed"' in seen[0]
+
+
+def test_an_issue_the_repo_owner_opened_is_intel_not_a_reply(s, web):
+    web.search_issues = {"translate react": [web._issue(10, "Extract hardcoded strings to react-i18next", by="OWNER"),
+                                             web._issue(11, "How do I extract hardcoded strings?", repo="other/app")]}
+    r = asyncio.run(run_research(s, web.client(), llm=FakeModel([Query(source="github", query="translate react", why="")])))
+    assert r["replies"] == 1 and r["intel"] == 1
+    with session() as db:
+        states = {o.url.split("github.com/")[1]: o.state for o in db.exec(select(Opportunity)).all()}
+    assert states == {"someone/app/issues/10": "intel", "other/app/issues/11": "new"}
+
+
+def test_the_scorer_sees_who_opened_the_issue_and_which_replies_are_the_owners(s, web):
+    web.search_issues = {"translate react": [web._issue(1, "Add i18n support")]}
+    web.thread_replies = {"https://api.github.com/repos/someone/app/issues/1/comments": [
+        {"user": {"login": "maint"}, "author_association": "OWNER", "body": "Already working on this."}]}
+    model = FakeModel([Query(source="github", query="translate react", why="")])
+    seen = []
+    async def spy(model_name, system, user, schema):
+        if schema is Scores:
+            seen.append((system, user))
+        return await model(model_name, system, user, schema)
+    asyncio.run(run_research(s, web.client(), llm=spy))
+    system, user = seen[0]
+    assert "maint (owner): Already working on this." in user and '"opened_by": "outsider"' in user
+    assert "already working on it" in system

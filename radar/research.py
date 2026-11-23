@@ -88,6 +88,8 @@ For every result, by id:
   skip: neither
   A thread that is closed, already answered, or has a pull request or finished fix linked in its
   latest replies is not "reply": use intel (if it still tells something) or skip.
+  Replies by the repo's own people are labeled (owner), (member) or (collaborator). If one of them
+  says they're already working on it, or asks people not to post, it's not "reply" either.
 - angle: for reply, how to help, answering their question first (mention the product only if it
   truly fits); for intel, what it tells the developer
 Return every id you were given, and only those."""
@@ -208,7 +210,7 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
 
     async def score(batch):
         user = json.dumps([{"id": i, "source": f.source, "title": f.title, "excerpt": f.excerpt, "replies": f.replies,
-                            "status": f.status, "date": f"{f.created_at:%Y-%m-%d}"} for i, f in batch], ensure_ascii=False)
+                            "status": f.status, "opened_by": f.opened_by or "outsider", "date": f"{f.created_at:%Y-%m-%d}"} for i, f in batch], ensure_ascii=False)
         return await _step(run.id, f"score:{batch[0][0]}-{batch[-1][0]}", llm(MODEL, scorer, user, Scores))
 
     scored: dict[str, Score] = {}
@@ -228,7 +230,9 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
             f = ids[i]
             is_mention = bool(mention) and mention in f"{f.title} {f.excerpt}".lower()
             rel = 5 if is_mention else sc.relevance
-            action = "intel" if f.query.startswith("repo:") and sc.action == "reply" else sc.action  # never promote on a competitor's tracker
+            # never "reply" on a competitor's tracker, or on an issue the repo's own people opened (their own to-do)
+            own_issue = f.query.startswith("repo:") or bool(f.opened_by)
+            action = "intel" if own_issue and sc.action == "reply" else sc.action
             state = "low" if rel < keep or action == "skip" else ("new" if action == "reply" or is_mention else "intel")
             o = Opportunity(run_id=run.id, url=f.url, source=f.source, title=f.title, excerpt=f.excerpt, created_at=f.created_at,
                             replies=f.replies, query=f.query, relevance=rel, category="mention" if is_mention else sc.category,

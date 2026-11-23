@@ -19,6 +19,16 @@ class Found:
     replies: int
     query: str
     status: str = ""  # e.g. "closed" for a GitHub issue
+    opened_by: str = ""  # GitHub: "owner", "member" or "collaborator" when the repo's own people opened it
+
+
+# GitHub's author_association values for the repo's own people; anyone else is an outsider
+TEAM = {"OWNER": "owner", "MEMBER": "member", "COLLABORATOR": "collaborator"}
+
+
+def _who(c: dict) -> str:
+    role = TEAM.get(c.get("author_association", ""))
+    return f"{c['user']['login']} ({role})" if role else c["user"]["login"]
 
 
 def _clean(s: str, n: int = 600) -> str:
@@ -37,18 +47,19 @@ async def github(client: httpx.AsyncClient, query: str, since: datetime, n: int)
     r = await client.get("https://api.github.com/search/issues", params={"q": q, "per_page": n, "sort": "created"})
     r.raise_for_status()
     return [Found("github", i["html_url"], i["title"], _clean(i.get("body") or ""), _ts(i["created_at"]), i["comments"], query,
-                  status=i.get("state", ""))
+                  status=i.get("state", ""), opened_by=TEAM.get(i.get("author_association", ""), ""))
             for i in r.json().get("items", [])]
 
 
 async def github_latest_replies(client: httpx.AsyncClient, issue_url: str, n: int = 3) -> str:
-    """The last few replies on a GitHub issue, so the scorer can tell when it's already answered or solved."""
+    """The last few replies on a GitHub issue, so the scorer can tell when it's already answered or solved.
+    The repo's own people are labeled, e.g. "truelockmc (owner): already working on this"."""
     m = re.match(r"https://github\.com/([^/]+/[^/]+)/issues/(\d+)", issue_url)
     if not m:
         return ""
     r = await client.get(f"https://api.github.com/repos/{m.group(1)}/issues/{m.group(2)}/comments", params={"per_page": 100})
     r.raise_for_status()
-    return " | ".join(f"{c['user']['login']}: {_clean(c.get('body') or '', 300)}" for c in r.json()[-n:])
+    return " | ".join(f"{_who(c)}: {_clean(c.get('body') or '', 300)}" for c in r.json()[-n:])
 
 
 async def devto(client: httpx.AsyncClient, tag: str, since: datetime, n: int) -> list[Found]:
