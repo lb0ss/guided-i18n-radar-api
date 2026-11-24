@@ -1,4 +1,4 @@
-"""The daily checks job, no LLM: stats from every source, new comments on your posts, one digest."""
+"""The daily checks job, no LLM: stats from every source, new issues and comments on your posts, one digest."""
 
 import asyncio
 import time
@@ -118,10 +118,12 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
     moved = any(old is not None and old != new_v for old, new_v in changes.values())
     sent = []
     if reported or moved or failed:  # quiet days stay quiet: the digest is still saved
-        subject = f"Radar: {len(reported)} new comment{'s' * (len(reported) != 1)}" + (", stats changed" if moved else "")
+        parts = ([counted(reported)] if reported else []) + (["stats changed"] if moved else []) \
+            + ([f"{len(failed)} problem{'s' * (len(failed) != 1)}"] if failed else [])
         first = min(reported, key=lambda c: c.created_at) if reported else None
-        sent = notify.send(s, subject, text, short_digest(reported, changes, failed),
-                           url=first.url if first else None, url_title="Open the comment" if first else None)
+        sent = notify.send(s, "Radar: " + ", ".join(parts), text, short_digest(reported, changes, failed),
+                           url=first.url if first else None,
+                           url_title=f"Open the {kind(first).removeprefix('GitHub ').removeprefix('dev.to ')}" if first else None)
 
     with session() as db:
         r = db.get(Run, run.id)
@@ -129,11 +131,30 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
         r.status = "partial" if failed else "ok"
         db.add(r)
         db.commit()
-    return {"run": run.id, "new_comments": len(reported), "baseline": len(new) if first_check else 0,
+    return {"run": run.id, "new_comments": len(reported), "new_summary": counted(reported) if reported else "nothing new on your posts",
+            "baseline": len(new) if first_check else 0,
             "failed": [f.name for f in failed], "digest": str(path), "notified": sent, "text": text}
 
 
 LABEL = {"openvsx": "Open VSX", "marketplace": "Marketplace", "github": "GitHub", "devto": "dev.to"}
+KINDS = ("GitHub issue", "GitHub issue comment", "dev.to comment")  # the order they're listed in
+
+
+def kind(c: FoundComment) -> str:
+    """What a watched item is: a new issue on your repo, a comment on one of its issues, or a dev.to comment."""
+    if c.external_id.startswith("github:issue:"):
+        return "GitHub issue"
+    if c.external_id.startswith("github:comment:"):
+        return "GitHub issue comment"
+    return f"{LABEL.get(c.platform, c.platform)} comment"
+
+
+def counted(items: list[FoundComment]) -> str:
+    """'1 new GitHub issue, 2 new dev.to comments': each kind named, none lumped together."""
+    n = {k: 0 for k in KINDS}
+    for c in items:
+        n[kind(c)] = n.get(kind(c), 0) + 1
+    return ", ".join(f"{v} new {k}{'s' * (v != 1)}" for k, v in n.items() if v)
 
 
 def short_digest(new: list[FoundComment], changes: dict, failed: list[Step]) -> str:
@@ -143,7 +164,7 @@ def short_digest(new: list[FoundComment], changes: dict, failed: list[Step]) -> 
     lines = []
     for c in sorted(new, key=lambda c: c.created_at)[:3]:
         body = " ".join(c.body.split())
-        lines.append(f"<b>{escape(c.author)}</b> on {escape(c.post_title[:40])}: {escape(body[:110])}{'…' if len(body) > 110 else ''}")
+        lines.append(f"<b>{escape(c.author)}</b> ({kind(c)}) on {escape(c.post_title[:40])}: {escape(body[:110])}{'…' if len(body) > 110 else ''}")
     if len(new) > 3:
         lines.append(f"…and {len(new) - 3} more in Radar")
     moved = [f"{LABEL.get(src, src)} {m.replace('_', ' ')} {v:g} ({'+' if v > old else ''}{v - old:g})"
@@ -158,16 +179,16 @@ def short_digest(new: list[FoundComment], changes: dict, failed: list[Step]) -> 
 def digest(stats: dict, changes: dict, new: list[FoundComment], baseline: list[FoundComment], failed: list[Step]) -> str:
     lines = ["# Radar digest", ""]
     if new:
-        lines += [f"## {len(new)} new comment{'s' * (len(new) != 1)} on your posts", ""]
-        for c in sorted(new, key=lambda c: c.created_at):
+        lines += [f"## {counted(new)}", ""]
+        for c in sorted(new, key=lambda c: (KINDS.index(kind(c)) if kind(c) in KINDS else 99, c.created_at)):
             body = " ".join(c.body.split())
-            lines += [f"- **{c.author}** on {c.post_title} ({c.platform}, {c.created_at.astimezone(UTC):%b %d})",
+            lines += [f"- {kind(c)} · **{c.author}** on {c.post_title} ({c.created_at.astimezone(UTC):%b %d})",
                       f"  {body[:280]}{'…' if len(body) > 280 else ''}", f"  {c.url}"]
         lines += ["", "Open Radar to confirm a drafted reply for any of them.", ""]
     elif baseline:
-        lines += [f"First check: {len(baseline)} existing comments recorded as already seen. From now on only new ones are reported.", ""]
+        lines += [f"First check: {len(baseline)} existing issues and comments recorded as already seen. From now on only new ones are reported.", ""]
     else:
-        lines += ["No new comments on your posts.", ""]
+        lines += ["No new GitHub issues, issue comments or dev.to comments.", ""]
     lines += ["## Stats", "", "| Source | Metric | Now | Change |", "|---|---|---|---|"]
     for (source, m), (old, v) in changes.items():
         delta = "" if old is None else (f"+{v - old:g}" if v > old else (f"{v - old:g}" if v < old else "–"))

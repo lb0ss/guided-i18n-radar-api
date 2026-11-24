@@ -80,8 +80,8 @@ def test_pushover_gets_a_short_phone_digest(s, web, monkeypatch):
     r = asyncio.run(run_checks(s2, web.client()))
     assert "pushed" in r["notified"]
     msg = sent[-1]
-    assert msg["title"] == "Radar: 1 new comment, stats changed" and msg["html"] == 1
-    assert "<b>reader</b> on Wrapping strings in t(): Does it handle plurals in Polish?" in msg["message"]
+    assert msg["title"] == "Radar: 1 new dev.to comment, stats changed" and msg["html"] == 1 and msg["url_title"] == "Open the comment"
+    assert "<b>reader</b> (dev.to comment) on Wrapping strings in t(): Does it handle plurals in Polish?" in msg["message"]
     assert "Open VSX downloads 870 (+13)" in msg["message"] and "|" not in msg["message"]  # no Markdown table
     assert msg["url"] == "https://dev.to/reader/comment/z1" and len(msg["message"]) <= 1024
 
@@ -129,3 +129,30 @@ def test_an_error_response_is_not_retried(s, web, monkeypatch):
     r = run(s, web)
     assert r["failed"] == ["stats:openvsx"] and len(calls) == 1
 
+
+def test_issues_and_comments_are_named_separately(s, web):
+    run(s, web)  # baseline
+    web.github_issues = [{"id": 71, "number": 8, "title": "Vue support?", "html_url": "https://github.com/lb0ss/guided-i18n/issues/8",
+                          "user": {"login": "asker"}, "body": "Any plans for Vue?", "created_at": "2026-11-21T09:00:00Z"}]
+    web.github_comments = [gh_comment(5, "someone", "Same here"), gh_comment(6, "other", "+1")]
+    web.devto_comments = [devto_comment("c9", "reader", "Nice write-up")]
+    r = run(s, web)
+    summary = "1 new GitHub issue, 2 new GitHub issue comments, 1 new dev.to comment"
+    assert r["new_summary"] == summary and f"## {summary}" in r["text"]
+    assert "- GitHub issue · **asker** on #8 Vue support?" in r["text"]
+
+
+def test_a_quiet_day_with_a_problem_says_so_in_the_title(s, web, monkeypatch):
+    from dataclasses import replace
+
+    from radar import notify
+
+    sent = []
+    monkeypatch.setattr(notify.httpx, "post", lambda url, timeout, data: sent.append(data) or type("R", (), {"raise_for_status": lambda self: None})())
+    monkeypatch.setattr("radar.checks.RETRY_DELAYS", ())
+    s2 = replace(s, pushover_token="tok", pushover_user="usr")
+    asyncio.run(run_checks(s2, web.client()))
+    web.downloads = 900
+    _flaky(web, "issues/comments", drops=99)
+    asyncio.run(run_checks(s2, web.client()))
+    assert sent[-1]["title"] == "Radar: stats changed, 1 problem"  # no "0 new comments"

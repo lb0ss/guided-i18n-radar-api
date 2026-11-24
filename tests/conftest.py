@@ -24,6 +24,7 @@ class FakeWeb:
         self.downloads = 857
         self.devto_comments = []
         self.github_comments = []
+        self.github_issues = []
         self.search_issues = {}  # query substring -> list of issues
         self.queries = []
         self.thread_replies = {}  # comments URL -> replies
@@ -58,7 +59,7 @@ class FakeWeb:
         if u.startswith("https://api.github.com/repos/lb0ss/guided-i18n/issues/comments"):
             return httpx.Response(200, json=self.github_comments)
         if u.startswith("https://api.github.com/repos/lb0ss/guided-i18n/issues"):
-            return httpx.Response(200, json=[])
+            return httpx.Response(200, json=self.github_issues)
         if u.startswith("https://api.github.com/repos/lb0ss/guided-i18n"):
             return httpx.Response(200, json={"stargazers_count": 0, "forks_count": 0, "open_issues_count": 3})
         if "dev.to/api/articles" in u:
