@@ -27,6 +27,8 @@ class Settings:
     digest_to: str | None
     pushover_token: str | None
     pushover_user: str | None
+    x_bearer_token: str | None = None
+    x_monthly_post_limit: int = 600  # about $3 a month at $0.005 a post
 
     @property
     def db_url(self) -> str:
@@ -56,4 +58,6 @@ def settings() -> Settings:
         digest_to=_env("DIGEST_TO"),
         pushover_token=_env("PUSHOVER_TOKEN"),
         pushover_user=_env("PUSHOVER_USER"),
+        x_bearer_token=_env("X_BEARER_TOKEN"),
+        x_monthly_post_limit=int(os.environ.get("X_MONTHLY_POST_LIMIT", "600")),
     )

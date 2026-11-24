@@ -1,4 +1,5 @@
-"""Search other people's threads: GitHub issues, dev.to, Stack Overflow, Hacker News. Free public APIs.
+"""Search other people's threads: GitHub issues, dev.to, Stack Overflow, Hacker News (free public APIs),
+and X when X_BEARER_TOKEN is set (paid per post).
 Every function returns Found items with the same shape, so the scorer sees one list."""
 
 import html
@@ -98,6 +99,14 @@ async def hackernews(client: httpx.AsyncClient, query: str, since: datetime, n: 
     return out
 
 
+async def x(client: httpx.AsyncClient, query: str, since: datetime, n: int, *, token: str, limit: int, run_id: int | None) -> list[Found]:
+    """X posts from the last 7 days (paid per post: see sources/x.py). Research binds token, limit and run_id."""
+    from . import x as xapi
+    return [Found("x", xapi.status_url(p["id"]), _clean(p["text"], 100), _clean(p["text"]), _ts(p["created_at"]),
+                  p.get("public_metrics", {}).get("reply_count", 0), query)
+            for p in await xapi.search(client, token, limit, run_id, query, since, n)]
+
+
 SEARCH = {"github": github, "devto": devto, "stackoverflow": stackoverflow, "hackernews": hackernews}
 
 SYNTAX = {
@@ -105,6 +114,7 @@ SYNTAX = {
     "devto": "a single dev.to tag, lowercase, no spaces (dev.to has no text search)",
     "stackoverflow": "Stack Overflow tags joined by ';' (all must match), e.g. reactjs;i18next",
     "hackernews": "plain search words",
+    "x": 'X search words and operators, e.g. "react-i18next" OR i18next (retweets and non-English posts are excluded by code)',
 }
 
 

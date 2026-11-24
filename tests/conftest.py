@@ -11,8 +11,9 @@ from radar.config import settings
 
 @pytest.fixture
 def s(tmp_path):
-    """Settings with a temporary data dir and database, no email or push."""
-    st = replace(settings(), data_dir=tmp_path, smtp_host=None, pushover_token=None, devto_api_key=None, github_token=None)
+    """Settings with a temporary data dir and database, no email, push or X (tests that need X turn it on)."""
+    st = replace(settings(), data_dir=tmp_path, smtp_host=None, pushover_token=None, devto_api_key=None, github_token=None,
+                 x_bearer_token=None)
     db.use_engine(create_engine(f"sqlite:///{tmp_path / 'radar.db'}"))
     return st
 
@@ -25,6 +26,8 @@ class FakeWeb:
         self.devto_comments = []
         self.github_comments = []
         self.github_issues = []
+        self.x_posts = {}  # query substring -> X API response body ({"data": [...], "includes": {...}})
+        self.x_status = 200
         self.search_issues = {}  # query substring -> list of issues
         self.queries = []
         self.thread_replies = {}  # comments URL -> replies
@@ -43,6 +46,13 @@ class FakeWeb:
         path = request.url.path
         if "/issues/" in path and path.endswith("/comments") and "lb0ss/guided-i18n" not in path:
             return httpx.Response(200, json=self.thread_replies.get(f"https://api.github.com{path}", []))
+        if u.startswith("https://api.x.com/2/tweets/search/recent"):
+            q = request.url.params["query"]
+            self.queries.append(("x", q))
+            assert request.headers["Authorization"] == "Bearer test-x-token"
+            if self.x_status != 200:
+                return httpx.Response(self.x_status, json={"title": "Payment Required", "detail": "credits depleted"})
+            return httpx.Response(200, json=next((v for k, v in self.x_posts.items() if k in q), {"meta": {"result_count": 0}}))
         if u.startswith("https://api.github.com/search/issues"):
             q = request.url.params["q"]
             self.queries.append(("github", q))

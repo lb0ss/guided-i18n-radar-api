@@ -30,6 +30,16 @@ class Step(SQLModel, table=True):
     detail: str = ""
 
 
+class XUsage(SQLModel, table=True):
+    """Every X API call Radar makes: X bills per post returned, and a monthly limit is enforced from this."""
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int | None = Field(default=None, foreign_key="run.id", index=True)
+    at: datetime = Field(default_factory=now, index=True)
+    what: str
+    posts: int
+    cost: float
+
+
 class Stat(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     run_id: int = Field(foreign_key="run.id", index=True)

@@ -5,6 +5,7 @@ import asyncio
 import json
 import time
 from datetime import timedelta
+from functools import partial
 from typing import Literal
 
 import httpx
@@ -17,14 +18,16 @@ from .checks import USER_AGENT
 from .config import ROOT, Settings, settings
 from .db import Opportunity, Run, Step, now, session
 from .llm import call
+from .sources import x as xapi
 from .sources.search import SEARCH, SYNTAX, Found, github_latest_replies, window
+from .sources.search import x as search_x
 
 MODEL = "claude-haiku-5-5"  # planner and scorer; cheap, and the bake-off showed Haiku is accurate
 SCORE_BATCH = 25
 MAX_TO_SCORE = 100
 MAX_THREAD_FETCHES = 20  # GitHub threads with replies, read before scoring (free, within the hourly API limit)
 
-Source = Literal["github", "devto", "stackoverflow", "hackernews"]
+Source = Literal["github", "devto", "stackoverflow", "hackernews", "x"]
 Category = Literal["problem", "competitor", "request", "mention", "other"]
 Action = Literal["reply", "intel", "skip"]
 
@@ -115,12 +118,13 @@ async def _step(run_id: int, name: str, coro):
     return result
 
 
-def fixed_queries(brief: dict) -> list[tuple[str, str]]:
-    """Free, exact queries every run: mentions of the product, new issues on competitors' repos."""
+def fixed_queries(brief: dict, x_on: bool = False) -> list[tuple[str, str]]:
+    """Exact queries every run: mentions of the product, new issues on competitors' repos.
+    All free, except the X mention search (only with an X token)."""
     a = brief.get("always", {})
     out = []
     if name := a.get("mentions"):
-        out += [("github", f'"{name}"'), ("hackernews", name)]
+        out += [("github", f'"{name}"'), ("hackernews", name)] + ([("x", f'"{name}"')] if x_on else [])
     out += [("github", f"repo:{r}") for r in a.get("competitor_repos", [])]
     return out
 
@@ -141,7 +145,8 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
     s = s or settings()
     brief = load_brief(s)
     limits = brief.get("limits", {})
-    caps = limits.get("queries_per_source", {})
+    x_on = bool(s.x_bearer_token)
+    caps = {k: v for k, v in limits.get("queries_per_source", {}).items() if k != "x" or x_on}  # no token, no X
     per_query = limits.get("results_per_query", 15)
     keep = limits.get("keep_relevance", 4)
     since = window(brief.get("freshness_days", 7))
@@ -158,7 +163,7 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
     client = client or httpx.AsyncClient(timeout=30, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     try:
         # 1. plan (model), then cap (code)
-        syntax = "\n".join(f"- {k}: {v}" for k, v in SYNTAX.items())
+        syntax = "\n".join(f"- {k}: {v}" for k, v in SYNTAX.items() if caps.get(k))
         planner = PLANNER.format(brief=brief_text, syntax=syntax, caps=json.dumps(caps), previous=", ".join(previous[-30:]) or "none yet")
         r = await _step(run.id, "plan", llm(MODEL, planner, "Plan this run's searches.", Plan))
         queries = []
@@ -168,16 +173,21 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
                 await _step(run.id, "plan:output", _fail(r.error or "no plan"))
             else:
                 queries = cap(r.output, caps)
-        queries += [q for q in fixed_queries(brief) if q not in queries]
+        queries += [q for q in fixed_queries(brief, x_on) if q not in queries]
+        search = dict(SEARCH)
+        if x_on:
+            search["x"] = partial(search_x, token=s.x_bearer_token, limit=s.x_monthly_post_limit, run_id=run.id)
 
         # 2. search every source in parallel (code; no model decides whether to)
         async def one(source: str, q: str):
-            return await _step(run.id, f"search:{source}:{q}"[:120], SEARCH[source](client, q, since, per_query))
+            n = xapi.MIN_RESULTS if source == "x" else per_query  # X bills per post: the smallest page
+            return await _step(run.id, f"search:{source}:{q}"[:120], search[source](client, q, since, n))
 
         found: dict[str, Found] = {}
         for res in await asyncio.gather(*(one(src, q) for src, q in queries)):
             for f in res or []:
                 found.setdefault(f.url, f)
+        cost += xapi.cost_of_run(run.id)  # X bills per post returned; models are counted as they run
     finally:
         if own_client:
             await client.aclose()

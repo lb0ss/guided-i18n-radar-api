@@ -25,6 +25,6 @@ always:
   competitor_repos: [lokalise/i18n-ally, i18next/i18next-cli, i18next/i18next-parser]   # their new issues
 
 limits:                     # caps code enforces on the planner
-  queries_per_source: {github: 4, devto: 3, stackoverflow: 2, hackernews: 2}
+  queries_per_source: {github: 4, devto: 3, stackoverflow: 2, hackernews: 2, x: 2}   # x: paid, only with X_BEARER_TOKEN
   results_per_query: 15
   keep_relevance: 4         # 1-5; lower scores are recorded (so they're not scored again) but not shown
