@@ -99,12 +99,13 @@ async def hackernews(client: httpx.AsyncClient, query: str, since: datetime, n: 
     return out
 
 
-async def x(client: httpx.AsyncClient, query: str, since: datetime, n: int, *, token: str, limit: int, run_id: int | None) -> list[Found]:
-    """X posts from the last 7 days (paid per post: see sources/x.py). Research binds token, limit and run_id."""
+async def x(client: httpx.AsyncClient, query: str, since: datetime, n: int, *, token: str, limit: int, run_id: int | None,
+            me: str | None = None, after: datetime | None = None) -> list[Found]:
+    """X posts from the last 7 days (paid per post: see sources/x.py). Research binds the keyword arguments."""
     from . import x as xapi
     return [Found("x", xapi.status_url(p["id"]), _clean(p["text"], 100), _clean(p["text"]), _ts(p["created_at"]),
                   p.get("public_metrics", {}).get("reply_count", 0), query)
-            for p in await xapi.search(client, token, limit, run_id, query, since, n)]
+            for p in await xapi.search(client, token, limit, run_id, query, since, n, me, after)]
 
 
 SEARCH = {"github": github, "devto": devto, "stackoverflow": stackoverflow, "hackernews": hackernews}

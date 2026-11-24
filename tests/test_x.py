@@ -31,7 +31,9 @@ def test_research_searches_x_and_counts_the_cost(s, web):
     web.x_posts = {"hardcoded": {"data": [post("111", "How do I extract hardcoded strings from my React app?")]}}
     r = asyncio.run(run_research(on(s), web.client(), llm=FakeModel([Query(source="x", query="hardcoded strings react", why="")])))
     xq = [q for src, q in web.queries if src == "x"]
-    assert "(hardcoded strings react) -is:retweet lang:en" in xq and '("guided-i18n") -is:retweet lang:en' in xq  # planner + mention
+    # planner query + the mention search; your own posts are left out of both
+    assert "(hardcoded strings react) -is:retweet lang:en -from:terrylife624" in xq
+    assert '("guided-i18n") -is:retweet lang:en -from:terrylife624' in xq
     assert r["replies"] == 1 and "https://x.com/i/web/status/111" in r["text"]
     with session() as db:
         assert db.exec(select(Opportunity)).one().source == "x"
@@ -72,3 +74,20 @@ def test_depleted_credits_are_reported_plainly(s, web):
     r = asyncio.run(run_checks(on(s), web.client()))
     assert "watch:x" in r["failed"] and "X credits depleted" in r["text"]
 
+
+def test_the_next_research_run_only_asks_x_for_newer_posts(s, web):
+    model = FakeModel([Query(source="x", query="react i18n", why="")])
+    asyncio.run(run_research(on(s), web.client(), llm=model))
+    starts = []
+    orig = web.handler
+    def spy(request):
+        if "api.x.com" in str(request.url):
+            starts.append(request.url.params["start_time"])
+        return orig(request)
+    web.handler = spy
+    asyncio.run(run_research(on(s), web.client(), llm=model))
+    with session() as db:
+        first = db.exec(select(Run).where(Run.job == "research")).first().started_at
+    from datetime import timedelta
+    expected = (first - timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert starts and all(st == expected for st in starts)  # not 7 days back: those posts were already paid for

@@ -4,7 +4,7 @@ APIs, a scorer model rates each result, code keeps the good ones. Models never d
 import asyncio
 import json
 import time
-from datetime import timedelta
+from datetime import UTC, timedelta
 from functools import partial
 from typing import Literal
 
@@ -157,6 +157,8 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
         db.add(run)
         db.commit()
         db.refresh(run)
+        last = db.exec(select(Run).where(Run.job == "research", Run.id < run.id, col(Run.finished_at).is_not(None))
+                       .order_by(col(Run.id).desc())).first()
         previous = sorted({o.query for o in db.exec(select(Opportunity).where(Opportunity.found_at > now() - timedelta(days=30))).all() if o.query})
     cost = 0.0
     own_client = client is None
@@ -176,7 +178,9 @@ async def run_research(s: Settings | None = None, client: httpx.AsyncClient | No
         queries += [q for q in fixed_queries(brief, x_on) if q not in queries]
         search = dict(SEARCH)
         if x_on:
-            search["x"] = partial(search_x, token=s.x_bearer_token, limit=s.x_monthly_post_limit, run_id=run.id)
+            search["x"] = partial(search_x, token=s.x_bearer_token, limit=s.x_monthly_post_limit, run_id=run.id,
+                                  me=s.sources.get("watch", {}).get("x"),  # your own posts aren't leads (and cost money)
+                                  after=last.started_at.replace(tzinfo=UTC) - timedelta(minutes=15) if last else None)
 
         # 2. search every source in parallel (code; no model decides whether to)
         async def one(source: str, q: str):

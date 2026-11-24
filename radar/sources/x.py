@@ -66,10 +66,12 @@ def status_url(post_id: str) -> str:
 
 
 async def search(client: httpx.AsyncClient, token: str, limit: int, run_id: int | None,
-                 query: str, since: datetime, n: int) -> list[dict]:
-    """Research: other people's recent posts. Retweets and non-English posts are left out by code."""
+                  query: str, since: datetime, n: int, me: str | None = None, after: datetime | None = None) -> list[dict]:
+    """Research: other people's recent posts. Code leaves out retweets, non-English posts and your own posts
+    (`me`), and starts at `after` (the last research run) so posts already paid for aren't bought again."""
     _check_budget(limit)
-    d = await _search(client, token, f"({query}) -is:retweet lang:en", since, n)
+    own = f" -from:{me.lstrip('@')}" if me else ""
+    d = await _search(client, token, f"({query}) -is:retweet lang:en{own}", max(since, after) if after else since, n)
     posts = d.get("data", [])
     _record(run_id, f"search: {query}", len(posts))
     return posts
