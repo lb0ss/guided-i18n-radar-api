@@ -8,6 +8,7 @@ stats:
 watch:
   github: lb0ss/guided-i18n                # new issues and issue comments
   devto: lb0ss                             # comments on your dev.to articles
+  x: terrylife624                          # replies to and mentions of you on X (paid; needs X_BEARER_TOKEN)
   me:                                      # your own accounts: your own comments are never reported
     github: lb0ss
     devto: lb0ss

@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlmodel import col, select
@@ -11,6 +11,7 @@ from . import notify
 from .config import Settings, settings
 from .db import Comment, MyPost, Run, Stat, Step, now, session
 from .sources import FoundComment, devto, github, marketplace, openvsx
+from .sources import x as xapi
 
 USER_AGENT = "guided-i18n-radar (personal stats)"
 
@@ -65,7 +66,11 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
         db.commit()
         db.refresh(run)
         # The very first completed check only records what's already there.
-        first_check = db.exec(select(Run).where(Run.job == "checks", Run.id < run.id, col(Run.finished_at).is_not(None))).first() is None
+        last = db.exec(select(Run).where(Run.job == "checks", Run.id < run.id, col(Run.finished_at).is_not(None))
+                       .order_by(col(Run.id).desc())).first()
+        first_check = last is None
+    # X bills per post returned: ask only for what's new since the last check (15 min overlap), at most 7 days
+    x_since = (last.started_at.replace(tzinfo=UTC) - timedelta(minutes=15)) if last else now() - timedelta(days=7)
 
     try:
         jobs = {}
@@ -92,6 +97,18 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
                 with session() as db:
                     known = set(db.exec(select(MyPost.url)).all())
                     db.add_all(MyPost(platform=p.platform, url=p.url, title=p.title, posted_at=p.posted_at) for p in posts if p.url not in known)
+                    db.commit()
+        if "x" in watch and s.x_bearer_token:  # paid: only with a token, within X_MONTHLY_POST_LIMIT
+            got = await _step(run.id, "watch:x", lambda: xapi.replies(client, s.x_bearer_token, s.x_monthly_post_limit, run.id,
+                                                                       watch["x"], x_since))
+            if got:
+                replies_x, mine = got
+                watched += replies_x
+                with session() as db:  # your posts they answer: context for drafting a reply
+                    known = set(db.exec(select(MyPost.url)).all())
+                    db.add_all(MyPost(platform="x", url=t["url"], title=" ".join(t["text"].split())[:80], text=t["text"],
+                                      posted_at=datetime.fromisoformat(t["created_at"]) if t.get("created_at") else None)
+                               for t in mine if t["url"] not in known)
                     db.commit()
     finally:
         if own_client:
@@ -129,6 +146,7 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
         r = db.get(Run, run.id)
         r.finished_at = now()
         r.status = "partial" if failed else "ok"
+        r.cost = xapi.cost_of_run(run.id)  # only X costs money here
         db.add(r)
         db.commit()
     return {"run": run.id, "new_comments": len(reported), "new_summary": counted(reported) if reported else "nothing new on your posts",
@@ -137,15 +155,18 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
 
 
 LABEL = {"openvsx": "Open VSX", "marketplace": "Marketplace", "github": "GitHub", "devto": "dev.to"}
-KINDS = ("GitHub issue", "GitHub issue comment", "dev.to comment")  # the order they're listed in
+KINDS = ("GitHub issue", "GitHub issue comment", "dev.to comment", "X reply")  # the order they're listed in
 
 
 def kind(c: FoundComment) -> str:
-    """What a watched item is: a new issue on your repo, a comment on one of its issues, or a dev.to comment."""
+    """What a watched item is: a new issue on your repo, a comment on one of its issues, a dev.to comment,
+    or a reply to (or mention of) you on X."""
     if c.external_id.startswith("github:issue:"):
         return "GitHub issue"
     if c.external_id.startswith("github:comment:"):
         return "GitHub issue comment"
+    if c.platform == "x":
+        return "X reply"
     return f"{LABEL.get(c.platform, c.platform)} comment"
 
 

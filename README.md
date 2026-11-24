@@ -14,7 +14,7 @@ Plain code runs every step; AI models only do the language work; a person posts 
 | 4 | Write ⇄ evaluate loop, Draft a Reply (`uv run radar draft …`, `POST /drafts`) | ✅ |
 | 5 | Review UI: [guided-i18n-radar-web](https://github.com/lb0ss/guided-i18n-radar-web), served by this API at `/` | ✅ |
 
-## What the daily check does (no AI, no cost)
+## What the daily check does (no AI; free except optional X)
 
 - **Stats** from public APIs: Open VSX downloads, VS Code Marketplace installs and downloads,
   GitHub stars and issues, dev.to reactions and comments (page views with `DEV_API_KEY`).
@@ -24,8 +24,12 @@ Plain code runs every step; AI models only do the language work; a person posts 
   a time (phase 4), and nothing is ever posted for you.
 - **Digest:** saved to `data/digests/`, and emailed or pushed when configured. Quiet days are saved
   but not sent.
-- Reddit and X aren't watched: Reddit is closing its public API and X's API is paid. Use their own
-  notifications, then paste the comment into Draft a Reply (phase 4).
+- **X (optional, paid):** with `X_BEARER_TOKEN` set, replies to and mentions of your X account
+  (`watch.x` in sources.yaml) since the last check. X bills per post returned (about $0.005), so a
+  quiet day costs nothing; Radar stops at `X_MONTHLY_POST_LIMIT` posts a month and says so in the
+  digest. Research can then also search X (`x` in the brief's `queries_per_source`).
+- Reddit isn't watched: it's closing its public API. Use its own notifications, then paste the
+  comment into Draft a Reply.
 
 What to track is in `projects/guided-i18n/sources.yaml`.
 

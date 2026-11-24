@@ -9,6 +9,7 @@ import httpx
 from sqlmodel import col, func, select
 
 from ..db import XUsage, now, session
+from . import FoundComment
 
 API = "https://api.x.com/2"
 PRICE_PER_POST = 0.005  # USD per post returned (X pay-per-use, Nov 2026); check developer.x.com before relying on it
@@ -73,3 +74,31 @@ async def search(client: httpx.AsyncClient, token: str, limit: int, run_id: int 
     _record(run_id, f"search: {query}", len(posts))
     return posts
 
+
+async def replies(client: httpx.AsyncClient, token: str, limit: int, run_id: int | None,
+                  handle: str, since: datetime) -> tuple[list[FoundComment], list[dict]]:
+    """Checks: replies to you and mentions of you since `since`, plus those of the answered posts that are
+    yours (saved as your posts, so a drafted reply has its context). Authors are looked up here: few posts,
+    and a name matters."""
+    _check_budget(limit)
+    h = handle.lstrip("@")
+    d = await _search(client, token, f"(to:{h} OR @{h}) -from:{h} -is:retweet", since, MIN_RESULTS, {
+        "expansions": "author_id,referenced_tweets.id,referenced_tweets.id.author_id", "user.fields": "username"})
+    posts = d.get("data", [])
+    inc = d.get("includes", {})
+    parents = {t["id"]: t for t in inc.get("tweets", [])}
+    users = {u["id"]: u["username"] for u in inc.get("users", [])}
+    _record(run_id, f"replies to @{h}", len(posts) + len(parents))
+    found = []
+    for p in posts:
+        ref = next((r["id"] for r in p.get("referenced_tweets", []) if r["type"] == "replied_to"), None)
+        parent = parents.get(ref) if ref else None
+        found.append(FoundComment(
+            platform="x", external_id=f"x:{p['id']}",
+            post_url=status_url(ref) if ref else status_url(p["id"]),
+            post_title=f"your post: {' '.join(parent['text'].split())[:60]}" if parent else "a mention of you",
+            url=status_url(p["id"]), author=users.get(p.get("author_id"), p.get("author_id", "someone")),
+            body=p.get("text", ""), created_at=datetime.fromisoformat(p["created_at"]),
+        ))
+    mine = [t | {"url": status_url(t["id"])} for t in parents.values() if users.get(t.get("author_id"), "").lower() == h.lower()]
+    return found, mine
