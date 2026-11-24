@@ -84,3 +84,48 @@ def test_pushover_gets_a_short_phone_digest(s, web, monkeypatch):
     assert "<b>reader</b> on Wrapping strings in t(): Does it handle plurals in Polish?" in msg["message"]
     assert "Open VSX downloads 870 (+13)" in msg["message"] and "|" not in msg["message"]  # no Markdown table
     assert msg["url"] == "https://dev.to/reader/comment/z1" and len(msg["message"]) <= 1024
+
+
+def _flaky(web, match, drops):
+    """Drops the connection on the first `drops` requests whose URL contains `match`; counts them."""
+    import httpx
+    orig, calls = web.handler, []
+    def handler(request):
+        if match in str(request.url):
+            calls.append(1)
+            if len(calls) <= drops:
+                raise httpx.ReadError("connection dropped", request=request)
+        return orig(request)
+    web.handler = handler
+    return calls
+
+
+def test_a_dropped_connection_is_retried(s, web, monkeypatch):
+    monkeypatch.setattr("radar.checks.RETRY_DELAYS", (0, 0))
+    run(s, web)  # first check: baseline
+    web.github_comments = [gh_comment(5, "someone", "Does it handle plurals?")]
+    calls = _flaky(web, "issues/comments", drops=1)  # e.g. the Mac fell asleep mid-request
+    r = run(s, web)
+    assert r["failed"] == [] and r["new_comments"] == 1 and len(calls) == 2
+
+
+def test_a_connection_that_keeps_dropping_fails_after_three_tries(s, web, monkeypatch):
+    monkeypatch.setattr("radar.checks.RETRY_DELAYS", (0, 0))
+    calls = _flaky(web, "issues/comments", drops=99)
+    r = run(s, web)
+    assert r["failed"] == ["watch:github"] and len(calls) == 3 and "(after 3 tries)" in r["text"]
+
+
+def test_an_error_response_is_not_retried(s, web, monkeypatch):
+    monkeypatch.setattr("radar.checks.RETRY_DELAYS", (0, 0))
+    import httpx
+    orig, calls = web.handler, []
+    def handler(request):
+        if "open-vsx.org" in str(request.url):
+            calls.append(1)
+            return httpx.Response(401)
+        return orig(request)
+    web.handler = handler
+    r = run(s, web)
+    assert r["failed"] == ["stats:openvsx"] and len(calls) == 1
+

@@ -14,14 +14,29 @@ from .sources import FoundComment, devto, github, marketplace, openvsx
 
 USER_AGENT = "guided-i18n-radar (personal stats)"
 
+# Waits before retrying a dropped connection (ReadError, timeout, can't connect). asyncio's clock
+# doesn't advance while the Mac sleeps, so a run cut off by sleep retries in the next wake window.
+RETRY_DELAYS = (30, 120)
 
-async def _step(run_id: int, name: str, coro):
+
+async def _step(run_id: int, name: str, make):
+    """Runs make() (a function returning a fresh coroutine each call) and records the step.
+    Network errors are retried; anything else (e.g. GitHub saying 401 or 404) fails at once."""
     t = time.monotonic()
-    try:
-        result = await coro
-        status, detail = "ok", ""
-    except Exception as e:  # noqa: BLE001 - one failing source must not stop the others
-        result, status, detail = None, "failed", f"{type(e).__name__}: {e}"[:500]
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            result = await make()
+            status, detail = "ok", ""
+            break
+        except httpx.TransportError as e:
+            if attempt < len(RETRY_DELAYS):
+                await asyncio.sleep(RETRY_DELAYS[attempt])
+                continue
+            result, status = None, "failed"
+            detail = f"{type(e).__name__}: {e} (after {attempt + 1} tries)"[:500]
+        except Exception as e:  # noqa: BLE001 - one failing source must not stop the others
+            result, status, detail = None, "failed", f"{type(e).__name__}: {e}"[:500]
+            break
     with session() as db:
         db.add(Step(run_id=run_id, name=name, status=status, seconds=round(time.monotonic() - t, 2), detail=detail))
         db.commit()
@@ -55,22 +70,22 @@ async def run_checks(s: Settings | None = None, client: httpx.AsyncClient | None
     try:
         jobs = {}
         if "openvsx" in src:
-            jobs["openvsx"] = openvsx.stats(client, src["openvsx"])
+            jobs["openvsx"] = lambda: openvsx.stats(client, src["openvsx"])
         if "marketplace" in src:
-            jobs["marketplace"] = marketplace.stats(client, src["marketplace"])
+            jobs["marketplace"] = lambda: marketplace.stats(client, src["marketplace"])
         if "github" in src:
-            jobs["github"] = github.stats(client, src["github"])
+            jobs["github"] = lambda: github.stats(client, src["github"])
         if "devto" in src:
-            jobs["devto"] = devto.stats(client, src["devto"], s.devto_api_key)
+            jobs["devto"] = lambda: devto.stats(client, src["devto"], s.devto_api_key)
         names = list(jobs)
         results = await asyncio.gather(*(_step(run.id, f"stats:{n}", jobs[n]) for n in names))
         stats = {n: r for n, r in zip(names, results) if r is not None}
 
         watched: list[FoundComment] = []
         if "github" in watch:
-            watched += await _step(run.id, "watch:github", github.comments(client, watch["github"], me.get("github"))) or []
+            watched += await _step(run.id, "watch:github", lambda: github.comments(client, watch["github"], me.get("github"))) or []
         if "devto" in watch:
-            got = await _step(run.id, "watch:devto", devto.posts_and_comments(client, watch["devto"], me.get("devto")))
+            got = await _step(run.id, "watch:devto", lambda: devto.posts_and_comments(client, watch["devto"], me.get("devto")))
             if got:
                 posts, comments = got
                 watched += comments
