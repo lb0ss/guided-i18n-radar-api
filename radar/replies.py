@@ -5,7 +5,8 @@ import json
 import httpx
 from sqlmodel import select
 
-from .db import Comment, DraftJob, MyPost, Opportunity, now, session
+from . import posts
+from .db import Comment, DraftJob, MyPost, Opportunity, PostPlan, PostTopic, now, session
 from .threads import CHANNEL_FOR, from_comment, from_opportunity, from_paste
 from .writing import channels, draft, estimate
 
@@ -35,7 +36,8 @@ async def fill_post_text(p: MyPost) -> MyPost:
 
 async def start(kind: str, ref: int | None = None, text: str | None = None, channel: str | None = None,
                 post_id: int | None = None, confirm: bool = False, llm=None) -> DraftJob:
-    """kind: opportunity (ref = Opportunity.id), comment (ref = Comment.id) or pasted (text, channel, optional post_id).
+    """kind: opportunity (ref = Opportunity.id), comment (ref = Comment.id), pasted (text, channel, optional post_id)
+    or post: a new X post on a suggested topic (ref = PostTopic.id) or your own (text).
     Raises NeedsConfirmation unless confirm=True: nothing is drafted, or paid for, without it."""
     if kind == "opportunity":
         with session() as db:
@@ -55,6 +57,16 @@ async def start(kind: str, ref: int | None = None, text: str | None = None, chan
     elif kind == "pasted":
         if not text or not channel:
             raise ValueError("pasted needs text and channel")
+    elif kind == "post":
+        topic = None
+        if ref is not None:
+            with session() as db:
+                topic = db.get(PostTopic, ref)
+            if topic is None:
+                raise ValueError(f"no topic {ref}")
+        elif not (text or "").strip():
+            raise ValueError("post needs a topic: a suggested one (id) or your own (text)")
+        channel = channel or posts.CHANNEL
     else:
         raise ValueError(f"unknown kind {kind!r}")
     if channel not in channels():
@@ -70,9 +82,26 @@ async def start(kind: str, ref: int | None = None, text: str | None = None, chan
         thread, pid = from_comment(c)
         job = await draft("comment", channel, thread, source_id=c.id, post_id=pid, **kwargs)
         _set_state(Comment, c.id, "drafted")
+    elif kind == "post":
+        extras: dict = {}
+        job = await draft("post", channel, posts.thread_for(topic, text), source_id=topic.id if topic else None,
+                          instruction=posts.POST_INSTRUCTION, on_text=lambda out: extras.update(visual=out.visual, alt_text=out.alt_text), **kwargs)
+        with session() as db:
+            db.add(PostPlan(job_id=job.id, topic=topic.title if topic else text.strip(), first_reply=posts.first_reply(), **extras))
+            db.commit()
+        if topic:
+            _set_status(topic.id, "drafted")
     else:
         job = await draft("pasted", channel, from_paste(text, post_id), post_id=post_id, **kwargs)
     return job
+
+
+def _set_status(topic_id: int, status: str) -> None:
+    with session() as db:
+        t = db.get(PostTopic, topic_id)
+        t.status = status
+        db.add(t)
+        db.commit()
 
 
 def _set_state(model, id_: int, state: str) -> None:
@@ -99,6 +128,10 @@ def mark_posted(job_id: int, url: str, posted_text: str) -> DraftJob:
             c = db.get(Comment, j.source_id)
             c.state = "posted"
             db.add(c)
+        if j.kind == "post" and j.source_id:
+            t = db.get(PostTopic, j.source_id)
+            t.status = "posted"
+            db.add(t)
         if j.channel.endswith("-post") and not db.exec(select(MyPost).where(MyPost.url == url)).first():
             first = posted_text.strip().splitlines()[0][:120] if posted_text.strip() else url
             db.add(MyPost(platform=j.channel.split("-")[0], url=url, title=first, text=posted_text, posted_at=now()))
@@ -110,7 +143,12 @@ def mark_posted(job_id: int, url: str, posted_text: str) -> DraftJob:
 def summary(job: DraftJob) -> dict:
     from .writing import attempts
 
-    return {**job.model_dump(), "thread": json.loads(job.thread), "attempts": [
+    plan = None
+    if job.kind == "post":
+        with session() as db:
+            p = db.exec(select(PostPlan).where(PostPlan.job_id == job.id)).first()
+        plan = p.model_dump() if p else None
+    return {**job.model_dump(), "plan": plan, "thread": json.loads(job.thread), "attempts": [
         {**a.model_dump(), **{k: json.loads(getattr(a, k) or ("{}" if k == "scores" else "[]"))
                               for k in ("rule_failures", "rule_warnings", "scores", "problems", "unsupported")}}
         for a in attempts(job.id)]}

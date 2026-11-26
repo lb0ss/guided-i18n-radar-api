@@ -96,6 +96,15 @@ def _since_first(rs, key) -> dict | None:
     return _change([rs[0], rs[-1]], key) if len(rs) > 1 else None
 
 
+def recorded_posts(skip_days: set[str]) -> list[dict]:
+    """X posts you marked as posted in Radar (and your posts that got X replies), on days MARKETING.md doesn't cover."""
+    from .db import MyPost
+    with session() as db:
+        rows = db.exec(select(MyPost).where(MyPost.platform == "x", col(MyPost.posted_at).is_not(None))).all()
+    days = {_local(p.posted_at).date().isoformat() for p in rows}
+    return [{"day": d, "kind": "post", "label": "X post"} for d in sorted(days - skip_days)]
+
+
 def reach(repo: Path | None = None) -> dict:
     repo = repo or Path(os.environ.get("I18N_CORE_PATH", "~/repos/i18n-ai-core")).expanduser()
     rs = readings()
@@ -109,5 +118,6 @@ def reach(repo: Path | None = None) -> dict:
         # one point per check, as read; each with its change since the check before
         "points": [{"at": t.isoformat(), **v, **{f"{s}_change": (v[s] - rs[i - 1][1][s]) if i else None for s in STORES}}
                    for i, (t, v) in enumerate(rs)],
-        "events": sorted(releases(repo) + posts(repo), key=lambda e: e["day"]),
+        "events": sorted(releases(repo) + (logged := posts(repo))
+                         + recorded_posts({e["day"] for e in logged if e["label"].startswith("X ")}), key=lambda e: e["day"]),
     }

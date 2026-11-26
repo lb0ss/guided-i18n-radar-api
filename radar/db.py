@@ -98,7 +98,7 @@ class DraftJob(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=now)
-    kind: str  # opportunity | comment | pasted
+    kind: str  # opportunity | comment | pasted | post
     source_id: int | None = None  # Opportunity.id or Comment.id
     post_id: int | None = None  # MyPost.id when replying under your own post
     channel: str
@@ -124,6 +124,30 @@ class Draft(SQLModel, table=True):
     problems: str = "[]"  # JSON list of {criterion, quote, fix}
     unsupported: str = "[]"
     cost: float = 0.0
+
+
+class PostTopic(SQLModel, table=True):
+    """A suggested topic for your next X post, with the evidence for it."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=now, index=True)
+    title: str
+    angle: str
+    evidence: str
+    source: str  # release | feedback | question | intel | candidate | stats
+    status: str = "new"  # new | drafted | posted | dismissed
+    cost: float = 0.0
+
+
+class PostPlan(SQLModel, table=True):
+    """What goes with a drafted post besides its text: the topic, an image idea, alt text, the links reply."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="draftjob.id", index=True)
+    topic: str
+    visual: str = ""
+    alt_text: str = ""
+    first_reply: str = ""
 
 
 class Schedule(SQLModel, table=True):

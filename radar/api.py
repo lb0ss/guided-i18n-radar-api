@@ -175,7 +175,7 @@ def put_brief(body: BriefText) -> dict:
 
 
 class DraftRequest(BaseModel):
-    kind: str = Field(description="opportunity | comment | pasted")
+    kind: str = Field(description="opportunity | comment | pasted | post (id = a suggested topic, or text = your own topic)")
     id: int | None = None
     text: str | None = None
     channel: str | None = None
@@ -193,6 +193,39 @@ async def create_draft(req: DraftRequest) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return replies.summary(job)
+
+
+@app.get("/posts/topics")
+def post_topics(status: str = "new", limit: int = 12) -> list[dict]:
+    """Suggested topics for your next X post, newest first."""
+    from .db import PostTopic
+    with session() as db:
+        return [t.model_dump() for t in db.exec(select(PostTopic).where(PostTopic.status == status)
+                                                    .order_by(col(PostTopic.id).desc()).limit(limit)).all()]
+
+
+@app.post("/posts/topics")
+async def suggest_post_topics() -> list[dict]:
+    """One planner call (under a cent): three topics from Radar's data, each with its evidence."""
+    from .posts import suggest_topics
+    try:
+        rows, _ = await suggest_topics()
+    except RuntimeError as e:
+        raise HTTPException(502, str(e)) from e
+    return [t.model_dump() for t in rows]
+
+
+@app.post("/posts/topics/{topic_id}/dismiss")
+def dismiss_topic(topic_id: int) -> dict:
+    from .db import PostTopic
+    with session() as db:
+        t = db.get(PostTopic, topic_id)
+        if t is None:
+            raise HTTPException(404, "no such topic")
+        t.status = "dismissed"
+        db.add(t)
+        db.commit()
+        return t.model_dump()
 
 
 @app.get("/drafts")

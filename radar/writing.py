@@ -26,6 +26,12 @@ class DraftText(BaseModel):
     text: str = Field(description="The reply or post, exactly as it would be posted.")
 
 
+class PostText(DraftText):
+    """A new post (not a reply): the text plus what goes with it."""
+    visual: str = Field(description="One image that makes the point at a glance: what it shows, concretely.")
+    alt_text: str = Field(description="Alt text for that image: what it shows, for someone who can't see it.")
+
+
 class Scores(BaseModel):
     answers_question: int
     claims_backed: int
@@ -133,9 +139,11 @@ def estimate() -> tuple[float, float]:
 
 
 async def draft(kind: str, channel: str, thread: list[str], source_id: int | None = None, post_id: int | None = None,
-                instruction: str | None = None, llm=call) -> DraftJob:
+                instruction: str | None = None, llm=call, on_text=None) -> DraftJob:
+    """on_text(output) is called with the writer's last output (for a post: its image idea and alt text)."""
     ch = channels()[channel]
-    own_post = post_id is not None or kind == "comment"
+    own_post = post_id is not None or kind in ("comment", "post")  # a post of your own needs no "I built it"
+    schema = PostText if kind == "post" else DraftText
     f = facts()
     writer_sys = WRITER_SYSTEM.format(facts=f, disclosure="" if own_post else '(e.g. "I built …"); you are not the original poster here')
     if own_post:
@@ -154,8 +162,10 @@ async def draft(kind: str, channel: str, thread: list[str], source_id: int | Non
     status = "failed"
     for attempt in range(1, MAX_ATTEMPTS + 1):
         user = json.dumps(task | ({"fix_these_problems_from_the_last_attempt": feedback} if feedback else {}), ensure_ascii=False, indent=1)
-        w = await llm(WRITER, writer_sys, user, DraftText)
+        w = await llm(WRITER, writer_sys, user, schema)
         d = Draft(job_id=job.id, attempt=attempt, text=w.output.text if w.output else "", cost=w.cost)
+        if w.output is not None and on_text:
+            on_text(w.output)
         if w.output is None:
             d.rule_failures = json.dumps([f"writer failed: {w.error}"])
             _save(d)
