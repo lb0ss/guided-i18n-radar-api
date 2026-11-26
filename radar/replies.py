@@ -1,4 +1,4 @@
-"""Draft a Reply: resolve what's being answered, confirm the cost, run the loop, record what was posted."""
+"""Drafting: resolve what's being answered (or the post's topic), confirm the cost, run the loop, record what was posted."""
 
 import json
 

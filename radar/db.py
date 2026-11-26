@@ -94,7 +94,7 @@ class Opportunity(SQLModel, table=True):
 
 
 class DraftJob(SQLModel, table=True):
-    """One Draft a Reply request: what it answers, and the outcome of the write-evaluate loop."""
+    """One draft request (a reply, or a new post): what it answers, and the outcome of the write-evaluate loop."""
 
     id: int | None = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=now)
