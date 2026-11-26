@@ -1,14 +1,15 @@
-"""Your own X posts: topic suggestions, drafting through the write ⇄ evaluate loop, marking as posted.
-A scripted model stands in for the real ones."""
+"""Your own X posts: topic suggestions, drafting through the write ⇄ evaluate loop, marking as posted,
+and the scheduled job. A scripted model stands in for the real ones."""
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 from sqlmodel import select
 
-from radar import posts, replies
-from radar.db import Comment, MyPost, PostPlan, PostTopic, now, session
+from radar import posts, replies, scheduler
+from radar.db import Comment, MyPost, PostPlan, PostTopic, Run, Schedule, now, session
 from radar.llm import Result
 from radar.writing import PostText, Verdict
 
@@ -92,3 +93,20 @@ def test_marking_a_post_as_posted_records_it_as_your_x_post(s, xcore):
         assert p.platform == "x" and p.posted_at is not None  # its replies get context; a ◆ on the downloads chart
         assert db.get(PostTopic, t.id).status == "posted"
 
+
+def test_the_scheduled_job_drafts_the_top_topic_and_tells_you(s, xcore, monkeypatch):
+    sent = []
+    monkeypatch.setattr(posts.notify, "send", lambda s, subject, full, short, **k: sent.append((subject, short)) or ["pushed"])
+    r = asyncio.run(posts.run_posts(replace(s), llm=Model()))
+    assert r["topic"] == "Undo that keeps your edits" and r["status"] == "pass" and r["cost"] > 0
+    assert sent == [("Radar: X post drafted (Undo that keeps your edits)", "Topic: Undo that keeps your edits. Draft pass: review it in Radar.")]
+    with session() as db:
+        run = db.exec(select(Run).where(Run.job == "posts")).one()
+        assert run.status == "ok" and run.cost == r["cost"]
+
+
+def test_the_post_job_waits_one_interval_after_its_added(s):
+    scheduler.ensure_defaults()
+    with session() as db:
+        row = db.get(Schedule, "posts")
+    assert row.enabled and row.interval_hours == 72 and not scheduler.is_due(row)  # no paid draft right on install

@@ -1,10 +1,11 @@
-"""Your own X posts: topic suggestions from Radar's data, and drafting through the same write ⇄ evaluate
-loop as replies. Nothing is ever posted for you.
+"""Your own X posts: topic suggestions from Radar's data, drafting through the same write ⇄ evaluate loop
+as replies, and the scheduled job that has a draft waiting for you. Nothing is ever posted for you.
 
 The X brief (docs/launch/x.md in the extension repo: strategy, format rules, allowed claims, what's been
 posted) is the writer's and evaluator's guide; FACTS.md stays the source of truth for claims."""
 
 import os
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Literal
@@ -12,8 +13,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlmodel import col, select
 
+from . import notify
 from .config import Settings, settings
-from .db import Comment, MyPost, Opportunity, PostTopic, now, session
+from .db import Comment, MyPost, Opportunity, PostTopic, Run, Step, now, session
 from .llm import call
 from .writing import facts
 
@@ -116,3 +118,56 @@ def thread_for(topic: PostTopic | None, text: str | None) -> list[str]:
     what = f"Topic: {topic.title}\nAngle: {topic.angle}\nEvidence: {topic.evidence}" if topic else f"Topic: {text}"
     return [f"<x_brief>\n{x_brief()}\n</x_brief>", what]
 
+
+async def run_posts(s: Settings | None = None, llm=call) -> dict:
+    """The scheduled job: suggest topics, draft the best one, and tell you a draft is waiting."""
+    from . import replies
+
+    s = s or settings()
+    with session() as db:
+        run = Run(job="posts")
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+    def step(name: str, t: float, status: str = "ok", detail: str = "") -> None:
+        with session() as db:
+            db.add(Step(run_id=run.id, name=name, status=status, seconds=round(time.monotonic() - t, 2), detail=detail[:500]))
+            db.commit()
+
+    cost, job, top, failed = 0.0, None, None, []
+    t = time.monotonic()
+    try:
+        topics, cost = await suggest_topics(llm)
+        top = topics[0]
+        step("suggest topics", t)
+    except Exception as e:  # noqa: BLE001 - reported in the run and the notification
+        step("suggest topics", t, "failed", f"{type(e).__name__}: {e}")
+        failed.append("suggest topics")
+    if top:
+        t = time.monotonic()
+        try:
+            job = await replies.start("post", top.id, confirm=True, llm=llm)  # scheduled: the cost is the schedule's
+            cost += job.cost
+            step(f"draft: {top.title}"[:120], t, "ok" if job.status == "pass" else "failed",
+                 "" if job.status == "pass" else f"draft ended as '{job.status}': see Drafts")
+        except Exception as e:  # noqa: BLE001
+            step(f"draft: {top.title}"[:120], t, "failed", f"{type(e).__name__}: {e}")
+            failed.append("draft")
+
+    text = "# Radar: X post draft\n\n" + (
+        f"Topic: **{top.title}**: {top.angle}\n\nEvidence: {top.evidence}\n\nDraft status: {job.status if job else 'not drafted'}. "
+        "Review it under Drafts in Radar; nothing is posted for you.\n" if top else "No topics this time.\n")
+    if failed:
+        text += "\n## Problems\n\n" + "\n".join(f"- {f}" for f in failed) + "\n"
+    notify.save(s, now().astimezone().strftime("%Y-%m-%d-%H%M%S") + "-post", text)
+    short = f"Topic: {top.title}. Draft {job.status if job else 'failed'}: review it in Radar." if top else "Topic suggestions failed."
+    sent = notify.send(s, f"Radar: X post drafted ({top.title})" if job else "Radar: X post draft failed", text, short)
+
+    with session() as db:
+        r = db.get(Run, run.id)
+        r.finished_at, r.cost, r.status = now(), round(cost, 4), ("partial" if failed or (job and job.status != "pass") else "ok")
+        db.add(r)
+        db.commit()
+    return {"run": run.id, "topic": top.title if top else None, "draft": job.id if job else None,
+            "status": job.status if job else "failed", "cost": round(cost, 4), "failed": failed, "notified": sent, "text": text}

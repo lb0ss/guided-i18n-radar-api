@@ -41,7 +41,9 @@ def health() -> dict:
 def get_schedule() -> list[dict]:
     with session() as db:
         rows = db.exec(select(Schedule)).all()
-    return [{**r.model_dump(), "built": r.job in scheduler.JOBS} for r in rows]
+        ran = set(db.exec(select(Run.job)).all())
+    # has_run: a job added with a delayed start (posts) has a last_run_at before it has ever run
+    return [{**r.model_dump(), "built": r.job in scheduler.JOBS, "has_run": r.job in ran} for r in rows]
 
 
 @app.put("/schedule/{job}")

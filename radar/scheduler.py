@@ -9,12 +9,15 @@ from sqlmodel import select
 
 from .checks import run_checks
 from .db import Schedule, now, session
+from .posts import run_posts
 from .research import run_research
 
 log = logging.getLogger("radar.scheduler")
 TICK_SECONDS = 300
-DEFAULTS = {"checks": (24.0, True), "research": (72.0, True)}
-JOBS = {"checks": run_checks, "research": run_research}
+DEFAULTS = {"checks": (24.0, True), "research": (72.0, True), "posts": (72.0, True)}
+JOBS = {"checks": run_checks, "research": run_research, "posts": run_posts}
+# Jobs whose first run waits one interval after they're added (a paid draft shouldn't start on install).
+START_LATER = {"posts"}
 _locks: dict[str, asyncio.Lock] = {}
 
 
@@ -22,7 +25,8 @@ def ensure_defaults() -> None:
     with session() as db:
         for job, (hours, enabled) in DEFAULTS.items():
             if db.get(Schedule, job) is None:
-                db.add(Schedule(job=job, interval_hours=hours, enabled=enabled and job in JOBS))
+                db.add(Schedule(job=job, interval_hours=hours, enabled=enabled and job in JOBS,
+                                last_run_at=now() if job in START_LATER else None))
         db.commit()
 
 
