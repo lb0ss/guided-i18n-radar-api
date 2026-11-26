@@ -94,6 +94,14 @@ def stats(points: int = 30) -> dict:
     return {"stats": out}
 
 
+@app.get("/reach")
+def reach() -> dict:
+    """Downloads made readable: totals, the change since the last check with its time span, per-day
+    downloads (long gaps spread and marked estimated), and release and post markers."""
+    from .reach import reach as compute
+    return compute()
+
+
 @app.get("/comments")
 def comments(state: str = "new") -> list[dict]:
     with session() as db:
